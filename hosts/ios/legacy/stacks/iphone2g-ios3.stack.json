@@ -1,0 +1,12 @@
+{
+  "id": "iphone2g-ios3",
+  "label": "iPhone 2G / iPhone OS 3.1.3 (ARMv6)",
+  "iosMin": "3.1",
+  "iosMax": "3.1.3",
+  "logicalViewport": [320, 480],
+  "rasterDensity": 1,
+  "profile": "iphone2g",
+  "frameworkNativeTool": "iphone2g",
+  "overrideViewportForBuild": true,
+  "unsupportedReason": null
+}

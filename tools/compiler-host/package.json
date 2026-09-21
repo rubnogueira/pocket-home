@@ -1,0 +1,13 @@
+{
+  "name": "@pocket-home/compiler-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build-time packages required by @pocketjs/framework (not bundled into the app)",
+  "dependencies": {
+    "@babel/core": "catalog:",
+    "@babel/preset-typescript": "catalog:",
+    "babel-preset-solid": "catalog:",
+    "opentype.js": "catalog:",
+    "solid-js": "catalog:"
+  }
+}

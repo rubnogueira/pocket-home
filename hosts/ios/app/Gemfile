@@ -1,0 +1,4 @@
+# NativeScript merges xcconfig via ruby -e "require 'xcodeproj'" (see nativescript xcconfig-service).
+source "https://rubygems.org"
+
+gem "xcodeproj", "~> 1.27"

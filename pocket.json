@@ -1,0 +1,25 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.pocket-home.dashboard",
+  "name": "pocket-home",
+  "title": "Pocket Home",
+  "version": "0.1.0",
+  "engine": {
+    "capabilities": {
+      "requires": ["text.glyphs.baked", "input.buttons"],
+      "enhances": ["input.touch", "net.http"]
+    }
+  },
+  "app": {
+    "entry": "app/main.tsx",
+    "output": "pocket-home-main",
+    "framework": "vue-vapor",
+    "viewport": {
+      "fixed": {
+        "logical": [1024, 768],
+        "presentation": "native"
+      }
+    }
+  }
+}

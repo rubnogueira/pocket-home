@@ -1,0 +1,12 @@
+{
+  "id": "armv7-ios9",
+  "targetId": "ios-native-armv7-ios9",
+  "hostAbi": 11,
+  "deploymentTarget": "9.0",
+  "clangTarget": "armv7-apple-ios9.0",
+  "rustTargetTriple": "armv7-apple-ios",
+  "rustTargetSpec": "hosts/ios/takeover/tiers/rust/armv7-apple-ios9.json",
+  "requiresRustNightly": true,
+  "defaultRasterDensity": 1,
+  "description": "32-bit ARMv7, iOS 9+ jailbreak. Same pocket.json canvas as other ios-native tiers."
+}

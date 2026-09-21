@@ -1,0 +1,266 @@
+{
+  "schema": 1,
+  "familyFallbacks": {
+    "iphone": { "legacyLogical": [320, 568], "label": "iPhone (generic)" },
+    "ipad": { "legacyLogical": [1024, 768], "label": "iPad (generic)" },
+    "ipod": { "legacyLogical": [320, 480], "label": "iPod touch (generic)" }
+  },
+  "products": {
+    "iPhone1,1": { "family": "iphone", "label": "iPhone 2G", "legacyLogical": [320, 480] },
+    "iPhone1,2": { "family": "iphone", "label": "iPhone 3G", "legacyLogical": [320, 480] },
+    "iPhone2,1": { "family": "iphone", "label": "iPhone 3GS", "legacyLogical": [320, 480] },
+    "iPhone3,1": { "family": "iphone", "label": "iPhone 4", "legacyLogical": [320, 480] },
+    "iPhone3,2": {
+      "family": "iphone",
+      "label": "iPhone 4 (GSM rev A)",
+      "legacyLogical": [320, 480]
+    },
+    "iPhone3,3": { "family": "iphone", "label": "iPhone 4 (CDMA)", "legacyLogical": [320, 480] },
+    "iPhone4,1": { "family": "iphone", "label": "iPhone 4S", "legacyLogical": [320, 480] },
+    "iPhone5,1": { "family": "iphone", "label": "iPhone 5 (GSM)", "legacyLogical": [320, 568] },
+    "iPhone5,2": {
+      "family": "iphone",
+      "label": "iPhone 5 (GSM+CDMA)",
+      "legacyLogical": [320, 568]
+    },
+    "iPhone5,3": { "family": "iphone", "label": "iPhone 5c (GSM)", "legacyLogical": [320, 568] },
+    "iPhone5,4": { "family": "iphone", "label": "iPhone 5c (Global)", "legacyLogical": [320, 568] },
+    "iPhone6,1": { "family": "iphone", "label": "iPhone 5s (GSM)", "legacyLogical": [320, 568] },
+    "iPhone6,2": { "family": "iphone", "label": "iPhone 5s (Global)", "legacyLogical": [320, 568] },
+    "iPhone7,1": { "family": "iphone", "label": "iPhone 6 Plus", "legacyLogical": [414, 736] },
+    "iPhone7,2": { "family": "iphone", "label": "iPhone 6", "legacyLogical": [375, 667] },
+    "iPhone8,1": { "family": "iphone", "label": "iPhone 6s", "legacyLogical": [375, 667] },
+    "iPhone8,2": { "family": "iphone", "label": "iPhone 6s Plus", "legacyLogical": [414, 736] },
+    "iPhone8,4": {
+      "family": "iphone",
+      "label": "iPhone SE (1st gen)",
+      "legacyLogical": [320, 568]
+    },
+    "iPhone9,1": { "family": "iphone", "label": "iPhone 7", "legacyLogical": [375, 667] },
+    "iPhone9,2": { "family": "iphone", "label": "iPhone 7 Plus", "legacyLogical": [414, 736] },
+    "iPhone9,3": { "family": "iphone", "label": "iPhone 7", "legacyLogical": [375, 667] },
+    "iPhone9,4": { "family": "iphone", "label": "iPhone 7 Plus", "legacyLogical": [414, 736] },
+    "iPhone10,1": { "family": "iphone", "label": "iPhone 8", "legacyLogical": [375, 667] },
+    "iPhone10,2": { "family": "iphone", "label": "iPhone 8 Plus", "legacyLogical": [414, 736] },
+    "iPhone10,3": { "family": "iphone", "label": "iPhone X", "legacyLogical": [375, 812] },
+    "iPhone10,4": { "family": "iphone", "label": "iPhone 8", "legacyLogical": [375, 667] },
+    "iPhone10,5": { "family": "iphone", "label": "iPhone 8 Plus", "legacyLogical": [414, 736] },
+    "iPhone10,6": { "family": "iphone", "label": "iPhone X", "legacyLogical": [375, 812] },
+    "iPhone11,2": { "family": "iphone", "label": "iPhone XS", "legacyLogical": [375, 812] },
+    "iPhone11,4": { "family": "iphone", "label": "iPhone XS Max", "legacyLogical": [414, 896] },
+    "iPhone11,6": { "family": "iphone", "label": "iPhone XS Max", "legacyLogical": [414, 896] },
+    "iPhone11,8": { "family": "iphone", "label": "iPhone XR", "legacyLogical": [414, 896] },
+    "iPhone12,1": { "family": "iphone", "label": "iPhone 11", "legacyLogical": [414, 896] },
+    "iPhone12,3": { "family": "iphone", "label": "iPhone 11 Pro", "legacyLogical": [375, 812] },
+    "iPhone12,5": { "family": "iphone", "label": "iPhone 11 Pro Max", "legacyLogical": [414, 896] },
+    "iPhone12,8": {
+      "family": "iphone",
+      "label": "iPhone SE (2nd gen)",
+      "legacyLogical": [375, 667]
+    },
+    "iPhone13,1": { "family": "iphone", "label": "iPhone 12 mini", "legacyLogical": [375, 812] },
+    "iPhone13,2": { "family": "iphone", "label": "iPhone 12", "legacyLogical": [390, 844] },
+    "iPhone13,3": { "family": "iphone", "label": "iPhone 12 Pro", "legacyLogical": [390, 844] },
+    "iPhone13,4": { "family": "iphone", "label": "iPhone 12 Pro Max", "legacyLogical": [428, 926] },
+    "iPad1,1": { "family": "ipad", "label": "iPad", "legacyLogical": [1024, 768] },
+    "iPad2,1": { "family": "ipad", "label": "iPad 2 (WiFi)", "legacyLogical": [1024, 768] },
+    "iPad2,2": { "family": "ipad", "label": "iPad 2 (GSM)", "legacyLogical": [1024, 768] },
+    "iPad2,3": { "family": "ipad", "label": "iPad 2 (CDMA)", "legacyLogical": [1024, 768] },
+    "iPad2,4": { "family": "ipad", "label": "iPad 2 (WiFi rev)", "legacyLogical": [1024, 768] },
+    "iPad2,5": { "family": "ipad", "label": "iPad mini", "legacyLogical": [1024, 768] },
+    "iPad2,6": { "family": "ipad", "label": "iPad mini (GSM)", "legacyLogical": [1024, 768] },
+    "iPad2,7": { "family": "ipad", "label": "iPad mini (Global)", "legacyLogical": [1024, 768] },
+    "iPad3,1": { "family": "ipad", "label": "iPad (3rd gen)", "legacyLogical": [1024, 768] },
+    "iPad3,2": { "family": "ipad", "label": "iPad (3rd gen CDMA)", "legacyLogical": [1024, 768] },
+    "iPad3,3": { "family": "ipad", "label": "iPad (3rd gen GSM)", "legacyLogical": [1024, 768] },
+    "iPad3,4": { "family": "ipad", "label": "iPad (4th gen)", "legacyLogical": [1024, 768] },
+    "iPad3,5": { "family": "ipad", "label": "iPad (4th gen GSM)", "legacyLogical": [1024, 768] },
+    "iPad3,6": { "family": "ipad", "label": "iPad (4th gen Global)", "legacyLogical": [1024, 768] },
+    "iPad4,1": { "family": "ipad", "label": "iPad Air", "legacyLogical": [1024, 768] },
+    "iPad4,2": { "family": "ipad", "label": "iPad Air (Cellular)", "legacyLogical": [1024, 768] },
+    "iPad4,3": { "family": "ipad", "label": "iPad Air (China)", "legacyLogical": [1024, 768] },
+    "iPad4,4": { "family": "ipad", "label": "iPad mini 2", "legacyLogical": [1024, 768] },
+    "iPad4,5": {
+      "family": "ipad",
+      "label": "iPad mini 2 (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad4,6": { "family": "ipad", "label": "iPad mini 2 (China)", "legacyLogical": [1024, 768] },
+    "iPad4,7": { "family": "ipad", "label": "iPad mini 3", "legacyLogical": [1024, 768] },
+    "iPad4,8": {
+      "family": "ipad",
+      "label": "iPad mini 3 (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad4,9": { "family": "ipad", "label": "iPad mini 3 (China)", "legacyLogical": [1024, 768] },
+    "iPad5,1": { "family": "ipad", "label": "iPad mini 4", "legacyLogical": [1024, 768] },
+    "iPad5,2": {
+      "family": "ipad",
+      "label": "iPad mini 4 (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad5,3": { "family": "ipad", "label": "iPad Air 2", "legacyLogical": [1024, 768] },
+    "iPad5,4": { "family": "ipad", "label": "iPad Air 2 (Cellular)", "legacyLogical": [1024, 768] },
+    "iPad6,3": { "family": "ipad", "label": "iPad Pro 9.7\"", "legacyLogical": [1024, 768] },
+    "iPad6,4": {
+      "family": "ipad",
+      "label": "iPad Pro 9.7\" (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad6,7": { "family": "ipad", "label": "iPad Pro 12.9\"", "legacyLogical": [1024, 768] },
+    "iPad6,8": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad6,11": { "family": "ipad", "label": "iPad (5th gen)", "legacyLogical": [1024, 768] },
+    "iPad6,12": {
+      "family": "ipad",
+      "label": "iPad (5th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad7,1": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (2nd gen)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad7,2": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (2nd gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad7,3": { "family": "ipad", "label": "iPad Pro 10.5\"", "legacyLogical": [1024, 768] },
+    "iPad7,4": {
+      "family": "ipad",
+      "label": "iPad Pro 10.5\" (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad7,5": { "family": "ipad", "label": "iPad (6th gen)", "legacyLogical": [1024, 768] },
+    "iPad7,6": {
+      "family": "ipad",
+      "label": "iPad (6th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad7,11": { "family": "ipad", "label": "iPad (7th gen)", "legacyLogical": [1024, 768] },
+    "iPad7,12": {
+      "family": "ipad",
+      "label": "iPad (7th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad8,1": { "family": "ipad", "label": "iPad Pro 11\"", "legacyLogical": [1024, 768] },
+    "iPad8,2": { "family": "ipad", "label": "iPad Pro 11\" (1TB)", "legacyLogical": [1024, 768] },
+    "iPad8,3": {
+      "family": "ipad",
+      "label": "iPad Pro 11\" (Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad8,4": {
+      "family": "ipad",
+      "label": "iPad Pro 11\" (Cellular, 1TB)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad8,5": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (3rd gen)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad8,6": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (3rd gen, 1TB)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad8,7": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (3rd gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad8,8": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (3rd gen, Cellular, 1TB)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad11,1": { "family": "ipad", "label": "iPad mini (5th gen)", "legacyLogical": [1024, 768] },
+    "iPad11,2": {
+      "family": "ipad",
+      "label": "iPad mini (5th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad11,3": { "family": "ipad", "label": "iPad Air (3rd gen)", "legacyLogical": [1024, 768] },
+    "iPad11,4": {
+      "family": "ipad",
+      "label": "iPad Air (3rd gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad11,6": { "family": "ipad", "label": "iPad (8th gen)", "legacyLogical": [1024, 768] },
+    "iPad11,7": {
+      "family": "ipad",
+      "label": "iPad (8th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad12,1": { "family": "ipad", "label": "iPad (9th gen)", "legacyLogical": [1024, 768] },
+    "iPad12,2": {
+      "family": "ipad",
+      "label": "iPad (9th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,1": { "family": "ipad", "label": "iPad Air (4th gen)", "legacyLogical": [1024, 768] },
+    "iPad13,2": {
+      "family": "ipad",
+      "label": "iPad Air (4th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,4": {
+      "family": "ipad",
+      "label": "iPad Pro 11\" (2nd gen)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,5": {
+      "family": "ipad",
+      "label": "iPad Pro 11\" (2nd gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,6": {
+      "family": "ipad",
+      "label": "iPad Pro 11\" (2nd gen, mmWave)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,7": {
+      "family": "ipad",
+      "label": "iPad Pro 11\" (2nd gen, Cellular mmWave)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,8": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (4th gen)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,9": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (4th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,10": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (4th gen, mmWave)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad13,11": {
+      "family": "ipad",
+      "label": "iPad Pro 12.9\" (4th gen, Cellular mmWave)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPad14,1": { "family": "ipad", "label": "iPad mini (6th gen)", "legacyLogical": [1024, 768] },
+    "iPad14,2": {
+      "family": "ipad",
+      "label": "iPad mini (6th gen, Cellular)",
+      "legacyLogical": [1024, 768]
+    },
+    "iPod1,1": { "family": "ipod", "label": "iPod touch (1st gen)", "legacyLogical": [320, 480] },
+    "iPod2,1": { "family": "ipod", "label": "iPod touch (2nd gen)", "legacyLogical": [320, 480] },
+    "iPod3,1": { "family": "ipod", "label": "iPod touch (3rd gen)", "legacyLogical": [320, 480] },
+    "iPod4,1": { "family": "ipod", "label": "iPod touch (4th gen)", "legacyLogical": [320, 480] },
+    "iPod5,1": { "family": "ipod", "label": "iPod touch (5th gen)", "legacyLogical": [320, 568] },
+    "iPod7,1": { "family": "ipod", "label": "iPod touch (6th gen)", "legacyLogical": [320, 568] },
+    "iPod9,1": { "family": "ipod", "label": "iPod touch (7th gen)", "legacyLogical": [320, 568] }
+  }
+}

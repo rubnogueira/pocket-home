@@ -1,0 +1,11 @@
+{
+  "id": "arm64-ios11",
+  "targetId": "ios-native-arm64-ios11",
+  "hostAbi": 15,
+  "deploymentTarget": "11.0",
+  "clangTarget": "arm64-apple-ios11.0",
+  "rustTargetTriple": "aarch64-apple-ios",
+  "requiresRustNightly": false,
+  "defaultRasterDensity": 2,
+  "description": "64-bit ARM64, iOS 11.x jailbreak. Same pocket.json canvas as other ios-native tiers."
+}

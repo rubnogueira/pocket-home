@@ -1,0 +1,33 @@
+{
+  "name": "@pocket-home/ios-app-shell",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NativeScript shell for Pocket Home on iOS 16+ (Simulator or device)",
+  "main": "src/app.ts",
+  "scripts": {
+    "postinstall": "node tools/install-cli-shims.cjs && node tools/patch-webpack-exit.cjs && node tools/patch-nativescript-bundler.cjs"
+  },
+  "dependencies": {
+    "@nativescript/core": "^9.1.2",
+    "@nativescript/pocketjs": "^0.2.1"
+  },
+  "devDependencies": {
+    "@nativescript/ios-quickjs": "9.1.0-alpha.0",
+    "@nativescript/types": "^9.1.1",
+    "@nativescript/webpack": "^5.0.38",
+    "nativescript": "^9.1.1",
+    "typescript": "^7.0.2",
+    "typescript-webpack": "npm:typescript@5.9.3"
+  },
+  "overrides": {
+    "acorn-stage3": {
+      "acorn-class-fields": "^1.0.0"
+    },
+    "parse5": "6.0.1"
+  },
+  "trustedDependencies": [
+    "@nativescript/core",
+    "core-js-pure",
+    "nativescript"
+  ]
+}

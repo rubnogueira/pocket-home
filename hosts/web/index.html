@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pocket Home</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: #0b0e17;
+        color: #cbd5e1;
+        font:
+          13px/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      select,
+      button {
+        background: #1e293b;
+        color: #e2e8f0;
+        border: 1px solid #334155;
+        border-radius: 5px;
+        padding: 4px 8px;
+        font: inherit;
+        cursor: pointer;
+        font-size: 12px;
+        transition: background 0.15s;
+      }
+      select:hover,
+      button:hover {
+        background: #334155;
+      }
+      button:active {
+        background: #6366f1;
+        border-color: #818cf8;
+      }
+      button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+
+      /* ── Canvas ──────────────────────────────────────────
+     The canvas area fills the viewport. The canvas is centered and sized by
+     JS in CSS pixels: for "Current Page" it fills exactly; for a fixed device
+     it is fitted to the available space (the preview never scrolls). The
+     framebuffer stays at logical × render-scale for crispness. */
+      #canvas-wrap {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        overflow: hidden;
+        background: #0b0e17;
+      }
+      #screen {
+        display: block;
+        background: #000;
+      }
+
+      /* ── Virtual buttons ─────────────────────────────── */
+      #gamepad {
+        display: none;
+        gap: 8px;
+        padding: 6px 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      #gamepad.show {
+        display: flex;
+      }
+      #gamepad button {
+        min-width: 38px;
+        font-size: 11px;
+        padding: 5px 8px;
+      }
+      #gamepad button.held {
+        background: #6366f1;
+        border-color: #818cf8;
+      }
+
+      /* ── Corner UI (always visible) ──────────────────── */
+      #corner {
+        position: fixed;
+        bottom: 14px;
+        right: 14px;
+        z-index: 110;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+      }
+      #res-label {
+        background: rgba(15, 23, 42, 0.92);
+        border: 1px solid rgba(51, 65, 85, 0.6);
+        border-radius: 10px;
+        padding: 7px 13px;
+        color: #94a3b8;
+        font-size: 11px;
+        backdrop-filter: blur(8px);
+      }
+      #corner button {
+        background: rgba(15, 23, 42, 0.92);
+        border: 1px solid rgba(51, 65, 85, 0.6);
+        border-radius: 10px;
+        padding: 7px 13px;
+        cursor: pointer;
+        color: #e2e8f0;
+        font-size: 12px;
+        backdrop-filter: blur(8px);
+      }
+      #corner button:hover {
+        background: rgba(30, 41, 59, 0.95);
+      }
+
+      /* ── Settings popup ──────────────────────────────── */
+      #popup {
+        display: none;
+        position: fixed;
+        bottom: 56px;
+        right: 14px;
+        z-index: 120;
+        background: rgba(15, 23, 42, 0.96);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(51, 65, 85, 0.7);
+        border-radius: 12px;
+        padding: 12px 14px;
+        min-width: 210px;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #popup.open {
+        display: flex;
+      }
+      #popup .sl {
+        font-size: 9px;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      #popup select {
+        font-size: 11px;
+        padding: 3px 6px;
+        width: 100%;
+      }
+      #popup button {
+        font-size: 11px;
+        padding: 4px 8px;
+      }
+      #popup .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+      }
+
+      .toggle {
+        position: relative;
+        width: 34px;
+        height: 18px;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .toggle .slider {
+        position: absolute;
+        inset: 0;
+        background: #334155;
+        border-radius: 9px;
+        transition: background 0.2s;
+      }
+      .toggle .slider::before {
+        content: "";
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        left: 3px;
+        bottom: 3px;
+        background: #e2e8f0;
+        border-radius: 50%;
+        transition: transform 0.2s;
+      }
+      .toggle input:checked + .slider {
+        background: #6366f1;
+      }
+      .toggle input:checked + .slider::before {
+        transform: translateX(16px);
+      }
+
+      /* ── Log modal ───────────────────────────────────── */
+      #log-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 300;
+        background: rgba(2, 4, 10, 0.66);
+        backdrop-filter: blur(2px);
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      #log-modal.open {
+        display: flex;
+      }
+      #log-panel {
+        display: flex;
+        flex-direction: column;
+        width: min(760px, 100%);
+        max-height: min(70vh, 640px);
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+      }
+      #log-panel .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        border-bottom: 1px solid #1e293b;
+        flex-shrink: 0;
+      }
+      #log-panel .head .title {
+        font-weight: 700;
+        color: #e2e8f0;
+        font-size: 12px;
+      }
+      #log-panel .head button {
+        padding: 3px 9px;
+        font-size: 12px;
+      }
+      #log {
+        flex: 1;
+        min-height: 120px;
+        overflow-y: auto;
+        margin: 0;
+        padding: 10px 14px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #94a3b8;
+        background: #0b1120;
+      }
+      #log:empty::before {
+        content: "No log output yet.";
+        color: #475569;
+      }
+    </style>
+
+    <script>
+      // First load with no explicit resolution → "Current Page" mode: the app
+      // tracks the browser content area, at scale = DPR so retina panels are crisp
+      // (kept in sync with engine.js MAX_AUTO_RENDER_SCALE; the motion-adaptive
+      // scale in blit() keeps scrolling cheap even at a high idle scale). width/
+      // height seed engine.js's boot size; index.html then live-fits the canvas to
+      // the real content box after mount (no reload on resolution change).
+      (function () {
+        var p = new URLSearchParams(location.search);
+        if (!p.has("width") || !p.has("height")) {
+          var dpr = Math.max(1, Math.min(4, Math.round(window.devicePixelRatio || 1)));
+          if (!p.has("res")) p.set("res", "page");
+          p.set("width", window.innerWidth);
+          p.set("height", window.innerHeight);
+          if (dpr > 1) p.set("scale", dpr);
+          history.replaceState(null, "", "?" + p.toString());
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="canvas-wrap">
+      <canvas id="screen" width="480" height="272"></canvas>
+    </div>
+
+    <div id="log-modal">
+      <div id="log-panel">
+        <div class="head">
+          <span class="title">PocketJS Log</span>
+          <button id="log-close" title="Close">Close</button>
+        </div>
+        <pre id="log"></pre>
+      </div>
+    </div>
+
+    <div id="gamepad">
+      <button data-btn="0x0100">L</button>
+      <button data-btn="0x0080">&larr;</button>
+      <button data-btn="0x0010">&uarr;</button>
+      <button data-btn="0x0040">&darr;</button>
+      <button data-btn="0x0020">&rarr;</button>
+      <button data-btn="0x0200">R</button>
+      <button data-btn="0x4000">CROSS</button>
+      <button data-btn="0x2000">CIRCLE</button>
+      <button data-btn="0x8000">SQUARE</button>
+      <button data-btn="0x1000">TRIANGLE</button>
+      <button data-btn="0x0001">SELECT</button>
+      <button data-btn="0x0008">START</button>
+    </div>
+
+    <div id="corner">
+      <span id="res-label"></span>
+      <button id="log-btn" title="Show the engine log">Log</button>
+      <button id="settings-btn" title="Settings">Settings</button>
+    </div>
+
+    <div id="popup">
+      <span class="sl">Resolution</span>
+      <select id="resolution"></select>
+      <button id="flip-btn">Flip Resolution</button>
+      <span class="sl">Display</span>
+      <div class="row">
+        <span style="font-size: 11px; color: #cbd5e1">Auto-resize</span>
+        <label class="toggle"
+          ><input type="checkbox" id="watch-resize" checked /><span class="slider"></span
+        ></label>
+      </div>
+      <div class="row">
+        <span style="font-size: 11px; color: #cbd5e1">Render Scale</span>
+        <select
+          id="render-scale"
+          style="font-size: 11px; padding: 2px 4px; min-width: 0; width: auto"
+        ></select>
+      </div>
+      <div class="row">
+        <span style="font-size: 11px; color: #cbd5e1">Show FPS</span>
+        <label class="toggle"
+          ><input type="checkbox" id="toggle-fps" checked /><span class="slider"></span
+        ></label>
+      </div>
+      <div class="row">
+        <span style="font-size: 11px; color: #cbd5e1">Show Memory</span>
+        <label class="toggle"
+          ><input type="checkbox" id="toggle-mem" checked /><span class="slider"></span
+        ></label>
+      </div>
+      <button id="fullscreen">Browser Fullscreen</button>
+    </div>
+
+    <script type="module">
+      import {
+        mount,
+        load,
+        pressVirtual,
+        setViewport,
+        getViewport,
+        renderScale,
+        setRenderScale,
+      } from "./engine.js";
+
+      const DEMO = "pocket-home-main.vue-vapor";
+
+      const RESOLUTIONS = [
+        { label: "Current Page", value: "page" },
+        { label: "PSP — 480×272", value: "480x272" },
+        { label: "PS Vita — 960×544", value: "960x544" },
+        { label: "iPhone (2007) — 480×320", value: "480x320" },
+        { label: "iPhone 4S — 480×320", value: "480x320" },
+        { label: "iPod touch 6 — 568×320", value: "568x320" },
+        { label: "iPhone SE — 568×320", value: "568x320" },
+        { label: "iPhone 14 — 844×390", value: "844x390" },
+        { label: "iPhone 16 Pro Max — 932×430", value: "932x430" },
+        { label: "iPad 2 — 1024×768", value: "1024x768" },
+        { label: "iPad Air — 1180×820", value: "1180x820" },
+        { label: "iPad Pro 11″ — 1194×834", value: "1194x834" },
+        { label: "iPad Pro 13″ — 1366×1024", value: "1366x1024" },
+        { label: "Nokia E7 (Symbian) — 640×360", value: "640x360" },
+        { label: "Meizu M8 (WinCE) — 720×480", value: "720x480" },
+        { label: "BlackBerry Classic — 720×720", value: "720x720" },
+        { label: "PocketBook e-ink — 1024×758", value: "1024x758" },
+        { label: "ESP32-P4 — 1024×600", value: "1024x600" },
+        { label: "MacBook Air — 1440×900", value: "1440x900" },
+        { label: "Full HD — 1920×1080", value: "1920x1080" },
+      ];
+
+      const HANDHELD_VALUES = new Set(["480x272", "960x544"]);
+
+      // ── DOM refs ────────────────────────────────────────
+
+      const canvasEl = document.getElementById("screen");
+      const wrapEl = document.getElementById("canvas-wrap");
+      const resSel = document.getElementById("resolution");
+      const resLabelEl = document.getElementById("res-label");
+      const watchCheckbox = document.getElementById("watch-resize");
+      const gamepadEl = document.getElementById("gamepad");
+      const flipBtn = document.getElementById("flip-btn");
+      const popup = document.getElementById("popup");
+      const settingsBtn = document.getElementById("settings-btn");
+      const fsBtn = document.getElementById("fullscreen");
+
+      // ── Selection ───────────────────────────────────────
+      // "page"  → track the browser content area (auto-resize on window resize)
+      // "WxH"   → a fixed device resolution, shown at real size / fit-to-window
+      let selection = "page";
+
+      function currentSelection() {
+        const p = new URLSearchParams(location.search);
+        const res = p.get("res");
+        if (res === "page") return "page";
+        if (res && /^\d+x\d+$/.test(res)) return res;
+        const w = Number(p.get("width")),
+          h = Number(p.get("height"));
+        if (w > 0 && h > 0) return `${w}x${h}`;
+        return "page";
+      }
+
+      // ── Dropdown ────────────────────────────────────────
+
+      const pageLabel = () => `Current Page (${window.innerWidth}×${window.innerHeight})`;
+
+      for (const r of RESOLUTIONS) {
+        const opt = document.createElement("option");
+        opt.value = r.value;
+        opt.textContent = r.value === "page" ? pageLabel() : r.label;
+        resSel.appendChild(opt);
+      }
+
+      function updatePageOptionLabel() {
+        const opt = resSel.querySelector('option[value="page"]');
+        if (opt) opt.textContent = pageLabel();
+      }
+
+      function selectResOption(val) {
+        if (!Array.from(resSel.options).some((o) => o.value === val)) {
+          const opt = document.createElement("option");
+          opt.value = val;
+          opt.textContent = `Custom (${val.replace("x", "×")})`;
+          resSel.appendChild(opt);
+        }
+        resSel.value = val;
+      }
+
+      function updateFlip() {
+        flipBtn.disabled = selection === "page";
+      }
+
+      // ── Sizing ──────────────────────────────────────────
+      // The canvas area fills the viewport (minus the gamepad row when visible).
+      // A fixed device smaller than the area is centered 1:1; a larger one is
+      // scaled down to fit. "Current Page" matches the area exactly.
+
+      function pageLogical() {
+        return {
+          w: Math.max(1, wrapEl.clientWidth),
+          h: Math.max(1, wrapEl.clientHeight),
+        };
+      }
+
+      function layoutCanvas() {
+        const { w: lw, h: lh } = getViewport();
+        const k = Math.min(1, wrapEl.clientWidth / lw, wrapEl.clientHeight / lh);
+        canvasEl.style.width = Math.round(lw * k) + "px";
+        canvasEl.style.height = Math.round(lh * k) + "px";
+        updateResInfo(k);
+      }
+
+      function updateResInfo(k) {
+        const { w: lw, h: lh } = getViewport();
+        const scale = renderScale();
+        let text = `${lw} × ${lh}`;
+        if (scale > 1) text += `  ${scale}×`;
+        if (k && k < 0.999) text += `  Fit ${Math.round(k * 100)}%`;
+        resLabelEl.textContent = text;
+      }
+
+      // ── Apply a resolution (no page reload) ─────────────
+
+      function applyLogical(lw, lh, { url = true } = {}) {
+        setViewport(lw, lh);
+        layoutCanvas();
+        if (url) {
+          const p = new URLSearchParams(location.search);
+          p.set("res", selection);
+          p.set("width", String(lw));
+          p.set("height", String(lh));
+          p.set("scale", String(renderScale()));
+          history.replaceState(null, "", "?" + p.toString());
+        }
+      }
+
+      function applyRes(val) {
+        selection = val;
+        selectResOption(val);
+        gamepadEl.classList.toggle("show", HANDHELD_VALUES.has(val));
+        updateFlip();
+        requestAnimationFrame(() => {
+          if (selection === "page") {
+            const { w, h } = pageLogical();
+            applyLogical(w, h);
+          } else {
+            const [w, h] = val.split("x").map(Number);
+            applyLogical(w, h);
+          }
+        });
+      }
+
+      function flipRes() {
+        if (selection === "page") return;
+        const [w, h] = selection.split("x").map(Number);
+        applyRes(`${h}x${w}`);
+      }
+
+      resSel.addEventListener("change", () => applyRes(resSel.value));
+      flipBtn.addEventListener("click", flipRes);
+
+      // ── Resize watcher ──────────────────────────────────
+
+      let resizeTimer = null;
+      window.addEventListener("resize", () => {
+        updatePageOptionLabel();
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          if (selection === "page" && watchCheckbox.checked) {
+            const { w, h } = pageLogical();
+            applyLogical(w, h);
+          } else {
+            layoutCanvas();
+          }
+        }, 150);
+      });
+
+      // ── Virtual gamepad ─────────────────────────────────
+
+      for (const el of gamepadEl.querySelectorAll("[data-btn]")) {
+        const bit = parseInt(el.dataset.btn, 16);
+        const set = (down) => (e) => {
+          e.preventDefault();
+          el.classList.toggle("held", down);
+          pressVirtual(bit, down);
+        };
+        el.addEventListener("mousedown", set(true));
+        el.addEventListener("mouseup", set(false));
+        el.addEventListener("mouseleave", set(false));
+        el.addEventListener("touchstart", set(true), { passive: false });
+        el.addEventListener("touchend", set(false));
+        el.addEventListener("touchcancel", set(false));
+      }
+
+      // ── Browser fullscreen ──────────────────────────────
+      // Hides the browser chrome (tabs + address bar). The app layout does not
+      // change — the canvas already fills the page. In "Current Page" mode the
+      // viewport re-sizes to the true fullscreen dimensions via the resize watcher.
+
+      function enterFS() {
+        const el = document.documentElement;
+        const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+        if (req) req.call(el).catch(() => {});
+      }
+
+      function exitFS() {
+        const ex =
+          document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (ex) ex.call(document).catch(() => {});
+      }
+
+      function updateFsBtn() {
+        const inFs = document.fullscreenElement || document.webkitFullscreenElement;
+        fsBtn.textContent = inFs ? "Exit Fullscreen" : "Browser Fullscreen";
+      }
+
+      function onFsChange() {
+        popup.classList.remove("open");
+        updateFsBtn();
+        requestAnimationFrame(() => {
+          if (selection === "page" && watchCheckbox.checked) {
+            const { w, h } = pageLogical();
+            applyLogical(w, h, { url: false });
+          } else {
+            layoutCanvas();
+          }
+        });
+      }
+
+      document.addEventListener("fullscreenchange", onFsChange);
+      document.addEventListener("webkitfullscreenchange", onFsChange);
+
+      fsBtn.addEventListener("click", () => {
+        const inFs = document.fullscreenElement || document.webkitFullscreenElement;
+        if (inFs) exitFS();
+        else enterFS();
+      });
+
+      // ── Settings popup ──────────────────────────────────
+
+      settingsBtn.addEventListener("click", () => popup.classList.toggle("open"));
+      document.addEventListener("click", (e) => {
+        if (
+          popup.classList.contains("open") &&
+          !popup.contains(e.target) &&
+          !settingsBtn.contains(e.target)
+        ) {
+          popup.classList.remove("open");
+        }
+      });
+
+      // ── HUD toggles ────────────────────────────────────
+
+      const tFps = document.getElementById("toggle-fps");
+      const tMem = document.getElementById("toggle-mem");
+      window.__hudShowFps = true;
+      window.__hudShowMem = true;
+      tFps.addEventListener("change", () => {
+        window.__hudShowFps = tFps.checked;
+      });
+      tMem.addEventListener("change", () => {
+        window.__hudShowMem = tMem.checked;
+      });
+
+      // ── Log modal ──────────────────────────────────────
+
+      const logModal = document.getElementById("log-modal");
+      const logEl = document.getElementById("log");
+      function log(msg) {
+        logEl.textContent = (logEl.textContent + msg + "\n").slice(-16000);
+        if (logModal.classList.contains("open")) logEl.scrollTop = logEl.scrollHeight;
+      }
+      function openLog() {
+        logModal.classList.add("open");
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+      function closeLog() {
+        logModal.classList.remove("open");
+      }
+      document.getElementById("log-btn").addEventListener("click", openLog);
+      document.getElementById("log-close").addEventListener("click", closeLog);
+      logModal.addEventListener("click", (e) => {
+        if (e.target === logModal) closeLog();
+      });
+
+      // ── Keyboard shortcuts ─────────────────────────────
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          if (logModal.classList.contains("open")) {
+            closeLog();
+            e.preventDefault();
+          } else if (popup.classList.contains("open")) {
+            popup.classList.remove("open");
+            e.preventDefault();
+          }
+        }
+      });
+
+      // ── Render-scale selector ──────────────────────────
+      // 1×–4×. The native screen DPR is labelled "(native)". 1× renders at the
+      // logical size (the browser upscales on HiDPI panels); higher values
+      // supersample — 2× on a 2× panel is crisp, 3×/4× is sharper.
+
+      const nativeDpr = Math.max(1, Math.min(4, Math.round(window.devicePixelRatio || 1)));
+      const scaleSel = document.getElementById("render-scale");
+      for (let s = 1; s <= 4; s++) {
+        const opt = document.createElement("option");
+        opt.value = String(s);
+        opt.textContent = s + "×" + (s === nativeDpr ? " (native)" : "");
+        scaleSel.appendChild(opt);
+      }
+      scaleSel.value = String(renderScale());
+      scaleSel.addEventListener("change", () => {
+        setRenderScale(Number(scaleSel.value));
+        const p = new URLSearchParams(location.search);
+        p.set("scale", String(renderScale()));
+        history.replaceState(null, "", "?" + p.toString());
+        layoutCanvas();
+      });
+
+      // ── Boot ────────────────────────────────────────────
+
+      await mount(canvasEl, { onLog: log });
+      await load(DEMO);
+
+      applyRes(currentSelection());
+    </script>
+  </body>
+</html>

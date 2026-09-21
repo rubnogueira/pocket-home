@@ -1,0 +1,12 @@
+{
+  "id": "iphone4s-ios6",
+  "label": "iPhone 4S / iPod 5 — iOS 6.1.x (ARMv7)",
+  "iosMin": "6.0",
+  "iosMax": "6.1.6",
+  "logicalViewport": [320, 480],
+  "rasterDensity": 2,
+  "profile": "iphone4s",
+  "frameworkNativeTool": "iphone4s",
+  "overrideViewportForBuild": true,
+  "unsupportedReason": null
+}

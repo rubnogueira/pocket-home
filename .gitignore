@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.pocket/
+.pocketjs-app-check-*/
+app/icons/generated
+# Modern iOS NativeScript shell (hosts/ios/app) — from ns prepare / bun run ios
+hosts/ios/app/platforms/
+hosts/ios/app/vendor/bundle/
+hosts/ios/app/src/assets/pocket/
+# Legacy path (renamed hosts/ios-simulator → hosts/ios/app)
+hosts/ios-simulator/vendor/bundle
+hosts/ios-simulator/platforms
+.DS_Store
+.env

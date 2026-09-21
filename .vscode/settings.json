@@ -1,0 +1,14 @@
+{
+  "#js/ts.tsdk.path#": "node_modules/typescript/lib",
+  "#js/ts.tsdk.promptToUseWorkspaceVersion#": true,
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "npm.packageManager": "bun",
+  "npm.exclude": "**/hosts/**",
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  }
+}

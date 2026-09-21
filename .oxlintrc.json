@@ -1,0 +1,12 @@
+{
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "hosts/**",
+    "app/icons/generated/**",
+    "**/*.d.ts"
+  ]
+}

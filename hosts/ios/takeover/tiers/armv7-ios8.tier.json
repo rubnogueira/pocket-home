@@ -1,0 +1,12 @@
+{
+  "id": "armv7-ios8",
+  "targetId": "ios-native-armv7-ios8",
+  "hostAbi": 14,
+  "deploymentTarget": "8.0",
+  "clangTarget": "armv7-apple-ios8.0",
+  "rustTargetTriple": "armv7-apple-ios",
+  "rustTargetSpec": "hosts/ios/takeover/tiers/rust/armv7-apple-ios8.json",
+  "requiresRustNightly": true,
+  "defaultRasterDensity": 2,
+  "description": "32-bit ARMv7, iOS 8.x jailbreak. Same pocket.json canvas as other ios-native tiers."
+}

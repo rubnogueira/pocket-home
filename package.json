@@ -1,0 +1,75 @@
+{
+  "name": "pocket-home",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pocket Home — smart-home dashboard on PocketJS (Vue Vapor)",
+  "license": "MIT",
+  "workspaces": {
+    "packages": [
+      "tools/*"
+    ],
+    "catalog": {
+      "@babel/core": "^8.0.6",
+      "@babel/preset-typescript": "^8.0.1",
+      "@mdi/js": "^7.4.47",
+      "@napi-rs/canvas": "^1.0.9",
+      "@nativescript/core": "^9.1.2",
+      "@nativescript/ios-quickjs": "9.1.0-alpha.0",
+      "@nativescript/pocketjs": "^0.2.1",
+      "@nativescript/types": "^9.1.1",
+      "@nativescript/webpack": "^5.0.38",
+      "@pocketjs/framework": "^0.12.0",
+      "@types/bun": "^1.4.2",
+      "@types/node": "^26.6.2",
+      "babel-preset-solid": "^1.9.15",
+      "nativescript": "^9.1.1",
+      "opentype.js": "^2.0.0",
+      "oxfmt": "^0.69.0",
+      "oxlint": "^1.84.0",
+      "solid-js": "^1.9.15",
+      "typescript": "^7.0.2",
+      "@vue/runtime-dom": "3.6.0-rc.9",
+      "@vue/runtime-vapor": "3.6.0-rc.9",
+      "vue": "3.6.0-rc.9",
+      "vue-jsx-vapor": "3.3.0-rc.2"
+    }
+  },
+  "type": "module",
+  "scripts": {
+    "build": "bun tools/build.ts",
+    "dev": "bun tools/dev.ts",
+    "check": "bun tools/check.ts",
+    "test": "bun test tests",
+    "postinstall": "bun tools/ensure-framework-deps.ts && bun tools/ensure-ios-app-shell.ts",
+    "ios": "bun tools/ios-harness.ts"
+  },
+  "dependencies": {
+    "@mdi/js": "catalog:",
+    "@pocket-home/compiler-host": "workspace:*",
+    "@pocketjs/framework": "catalog:",
+    "vue": "catalog:",
+    "vue-jsx-vapor": "catalog:"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@vue/runtime-dom": "catalog:",
+    "@vue/runtime-vapor": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
+  },
+  "overrides": {
+    "acorn-stage3": {
+      "acorn-class-fields": "^1.0.0"
+    }
+  },
+  "packageManager": "bun@1.4.2",
+  "trustedDependencies": [
+    "@nativescript/core",
+    "@parcel/watcher",
+    "core-js-pure",
+    "nativescript"
+  ]
+}
