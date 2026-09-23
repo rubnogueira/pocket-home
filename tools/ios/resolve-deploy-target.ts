@@ -27,19 +27,15 @@ function isArm64(cpu: string): boolean {
   return normalized.includes("arm64") || normalized === "arm64e";
 }
 
+/**
+ * Devices only a framework legacy stack can serve. Every armv7/arm64 device on iOS 5+ goes through
+ * an ios-native tier instead: the takeover host lays the guest out at the screen's size in points
+ * (phone or tablet, either orientation), draws with OpenGL ES and loads the guest baked for the
+ * screen's density, so the per-model phone canvases of the old stacks are no longer needed.
+ */
 function resolveLegacyStack(device: UsbDeviceIdentity): string | undefined {
   const { major } = iosMajorMinor(device.productVersion);
-  const type = device.productType;
-
-  if (type === "iPhone1,1" && major === 3) return "iphone2g-ios3";
-  if (type === "iPhone4,1" && major === 6) return "iphone4s-ios6";
-  if (type === "iPod4,1" && major === 6) return "ipodtouch4-ios6";
-  if ((type === "iPod7,1" || type === "iPod9,1") && major === 12) return "ipodtouch-ios12";
-
-  if (major <= 6) {
-    if (type.startsWith("iPod")) return "ipodtouch4-ios6";
-    if (type.startsWith("iPhone")) return "iphone4s-ios6";
-  }
+  if (device.productType === "iPhone1,1" && major === 3) return "iphone2g-ios3";
   return undefined;
 }
 
@@ -50,16 +46,23 @@ export function nativeTierForDevice(device: UsbDeviceIdentity): string {
   if (arm64) {
     if (major >= 12) return "arm64-ios12";
     if (major >= 11) return "arm64-ios11";
+    // iOS 7-10 on 64-bit hardware (iPhone 5s, iPad Air/mini 2...): those releases still run
+    // 32-bit apps, so the armv7 tier of that release serves them.
+  } else if (device.cpuArchitecture.toLowerCase().startsWith("armv6")) {
     throw new Error(
-      `ios-device: iOS ${device.productVersion} on ${device.cpuArchitecture} has no arm64 tier (need iOS 11+)`,
+      `ios-device: ${device.productType} (${device.cpuArchitecture}) cannot run an ios-native tier: ` +
+        "current toolchains no longer link ARMv6 (only the iPhone 2G has a framework stack)",
     );
   }
 
-  if (major >= 9) return "armv7-ios9";
+  if (major >= 9) return "armv7-ios9"; // 9.x and 10.x (the last 32-bit release)
   if (major >= 8) return "armv7-ios8";
   if (major >= 7) return "armv7-ios7";
+  if (major >= 6) return "armv7-ios6";
+  if (major >= 5) return "armv7-ios5";
   throw new Error(
-    `ios-device: iOS ${device.productVersion} on ${device.cpuArchitecture} needs a legacy stack, not ios-native`,
+    `ios-device: iOS ${device.productVersion} is below the oldest tier (iOS 5); every ARMv7 ` +
+      "device can update to iOS 5 or later",
   );
 }
 

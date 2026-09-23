@@ -12,3 +12,7 @@ hosts/ios-simulator/vendor/bundle
 hosts/ios-simulator/platforms
 .DS_Store
 .env
+# Browser wasm core built by tools/wasm.ts (engine/web)
+engine/web/target/
+hosts/web/pocketjs.wasm
+engine/ios-takeover/target/

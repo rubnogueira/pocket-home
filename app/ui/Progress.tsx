@@ -22,7 +22,9 @@ export function Progress(props: ProgressProps) {
         </View>
       ) : null}
       <View class={PROGRESS_TRACK}>
-        <View class={PROGRESS_FILL} style={{ width: `${pct}%` }} />
+        {/* Split by flex grow: the core has no percentage widths. */}
+        <View class={PROGRESS_FILL} style={{ grow: pct, basis: 0 }} />
+        <View style={{ grow: 100 - pct, basis: 0 }} />
       </View>
     </View>
   );

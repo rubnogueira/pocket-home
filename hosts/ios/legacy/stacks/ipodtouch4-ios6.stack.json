@@ -1,6 +1,6 @@
 {
   "id": "ipodtouch4-ios6",
-  "label": "iPod touch 4G — iOS 6.1.x (ARMv7)",
+  "label": "iPod touch 4G \u2014 iOS 6.1.x (ARMv7)",
   "iosMin": "6.0",
   "iosMax": "6.1.6",
   "logicalViewport": [320, 480],
@@ -8,5 +8,6 @@
   "profile": "ipodtouch4",
   "frameworkNativeTool": "ipodtouch4",
   "overrideViewportForBuild": true,
-  "unsupportedReason": null
+  "unsupportedReason": null,
+  "nativeTier": "armv7-ios6"
 }

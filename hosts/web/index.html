@@ -3,10 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <title>Pocket Home</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover: draw under the status bar / home indicator (padded below with
+         env(safe-area-inset-*)); theme-color tints Chrome/Android bars. Safari 26 ignores
+         theme-color and samples the html/body background instead — both are the app colour. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f172a" />
+    <!-- Home-screen web app: launches full screen in the app colour, like a native app. -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Pocket Home" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style>
       :root {
         color-scheme: dark;
+        /* App surface (Tailwind slate-900): every browser bar, gap and letterbox matches it. */
+        --app-bg: #0f172a;
+        /* Bottom band the page is drawn under but cannot be tapped in (home indicator, a
+           floating browser toolbar). Set by the script below; the app scrolls its content
+           clear of it (__pocketContentInsets) instead of the page being cut short. */
+        --content-inset-bottom: 0px;
+        /* Page height. The dynamic viewport by default; on iPhone Safari the full screen, so
+           the app is drawn on under the translucent floating address bar (set below). */
+        --page-h: 100dvh;
+        --reserve-top: env(safe-area-inset-top, 0px);
       }
       * {
         box-sizing: border-box;
@@ -16,9 +36,15 @@
       html,
       body {
         height: 100%;
+        background: var(--app-bg);
+        overscroll-behavior: none;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
       }
       body {
-        background: #0b0e17;
+        background: var(--app-bg);
         color: #cbd5e1;
         font:
           13px/1.4 ui-monospace,
@@ -29,6 +55,8 @@
         flex-direction: column;
         align-items: stretch;
         height: 100vh;
+        /* Dynamic viewport: tracks mobile toolbars showing/hiding (100vh overshoots them). */
+        height: var(--page-h);
         overflow: hidden;
       }
 
@@ -70,11 +98,31 @@
         justify-content: center;
         width: 100%;
         overflow: hidden;
-        background: #0b0e17;
+        background: var(--app-bg);
+        /* Out of the notch and status bar; down to the bottom edge, under the home indicator
+           and a floating browser toolbar (the app insets its scroll content instead). */
+        padding: var(--reserve-top) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
       }
       #screen {
         display: block;
-        background: #000;
+        background: var(--app-bg);
+        /* Filled from the first layout (JS then sizes it exactly). */
+        width: 100%;
+        height: 100%;
+      }
+      /* Loading: only the app colour shows until the app's first laid-out frame is on screen
+         (no empty WebGL canvas, no placeholder-sized frame, no HUD before layout). Then the
+         app, HUD and controls fade in together. */
+      #screen,
+      #hud,
+      #corner {
+        transition: opacity 0.18s ease-out;
+      }
+      html:not(.ready) #screen,
+      html:not(.ready) #hud,
+      html:not(.ready) #corner {
+        opacity: 0;
+        pointer-events: none;
       }
 
       /* ── Virtual buttons ─────────────────────────────── */
@@ -102,8 +150,9 @@
       /* ── Corner UI (always visible) ──────────────────── */
       #corner {
         position: fixed;
-        bottom: 14px;
-        right: 14px;
+        /* Above the home indicator and any floating browser toolbar, so it stays tappable. */
+        bottom: calc(var(--content-inset-bottom) + 10px);
+        right: calc(env(safe-area-inset-right, 0px) + 14px);
         z-index: 110;
         display: flex;
         flex-direction: row;
@@ -137,8 +186,8 @@
       #popup {
         display: none;
         position: fixed;
-        bottom: 56px;
-        right: 14px;
+        bottom: calc(var(--content-inset-bottom) + 52px);
+        right: calc(env(safe-area-inset-right, 0px) + 14px);
         z-index: 120;
         background: rgba(15, 23, 42, 0.96);
         backdrop-filter: blur(16px);
@@ -273,21 +322,113 @@
       }
     </style>
 
+    <!-- Startup: the engine's modules are fetched at once instead of one import at a time. -->
+    <link rel="modulepreload" href="engine.js" />
+    <link rel="modulepreload" href="wasm-ops.js" />
+    <link rel="modulepreload" href="gpu.js" />
+    <link rel="modulepreload" href="hud.js" />
+    <link rel="modulepreload" href="audio.js" />
+    <link rel="modulepreload" href="net.js" />
     <script>
+      // Startup: request the engine, the asset pack and the app bundle before any script runs.
+      // engine.js preload() fetches the same URLs, and gets them from these requests. The density
+      // must match engine.js autoDensity (ceil(devicePixelRatio), 1..3); a pinned
+      // ?density / ?scale is left to engine.js.
+      (function () {
+        var APP = "pocket-home-main.vue-vapor";
+        var q = new URLSearchParams(location.search);
+        var urls = ["pocketjs.wasm"];
+        if (!q.has("density") && !q.has("scale")) {
+          var d = Math.max(1, Math.min(3, Math.ceil((window.devicePixelRatio || 1) - 0.05)));
+          urls.push("dist/density/" + d + "/" + APP + ".pak", "dist/density/" + d + "/" + APP + ".js");
+        }
+        for (var i = 0; i < urls.length; i++) {
+          var link = document.createElement("link");
+          link.rel = "preload";
+          link.as = "fetch";
+          link.crossOrigin = "anonymous";
+          link.href = urls[i];
+          document.head.appendChild(link);
+        }
+      })();
+
+      // Bottom edge. On iPhone Safari 26 the address bar is a translucent pill floating over
+      // the bottom of the screen, and the layout viewport (innerHeight, 100dvh) ends above
+      // it, so a viewport-high page leaves an empty band behind the pill. Instead the page is
+      // made screen-high (viewport-fit=cover puts its origin at the screen top): the app is
+      // drawn on under the pill, and scrolls its content clear of it instead, so the last row
+      // rests above the bar where it can be tapped.
+      //
+      // The pill is ~48 pt tall and sits on the home-indicator inset, so its top edge is
+      // screen.height - safeBottom - 48 in page coordinates. Elsewhere (docked toolbars, iPad,
+      // landscape, a home-screen app) the page is the viewport and the band is just the
+      // home indicator. Published as globalThis.__pocketContentInsets (logical px = CSS px)
+      // for the app, and to CSS for the corner UI (fixed, so relative to the viewport).
+      (function () {
+        var root = document.documentElement;
+        var iPhone = /iPhone|iPod/.test(navigator.userAgent || "");
+        var standalone =
+          navigator.standalone === true ||
+          (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+        var FLOATING_BAR_PT = 48;
+        var MARGIN = 8;
+        var probe = null;
+        function safeBottom() {
+          if (!document.body) return 0;
+          if (!probe) {
+            probe = document.createElement("div");
+            probe.style.cssText =
+              "position:fixed;visibility:hidden;pointer-events:none;height:0;" +
+              "padding-bottom:env(safe-area-inset-bottom,0px)";
+            document.body.appendChild(probe);
+          }
+          return parseFloat(getComputedStyle(probe).paddingBottom) || 0;
+        }
+        function update() {
+          var safe = safeBottom();
+          var portrait = window.innerHeight > window.innerWidth;
+          var underBar = iPhone && !standalone && portrait;
+          // Page height past the viewport bottom (drawn under the floating bar).
+          var extra = underBar ? Math.max(0, window.screen.height - window.innerHeight) : 0;
+          root.style.setProperty(
+            "--page-h",
+            extra > 0 ? window.innerHeight + extra + "px" : "100dvh",
+          );
+          // Untappable band at the bottom of the viewport.
+          var band = safe;
+          if (underBar) {
+            var barTop = window.screen.height - safe - FLOATING_BAR_PT;
+            band = Math.max(safe, window.innerHeight - barTop + MARGIN);
+          }
+          band = Math.max(0, Math.round(band));
+          root.style.setProperty("--content-inset-bottom", band + "px");
+          // The app's content ends above that band (measured from the page bottom) and above
+          // this page's corner controls (resolution / Log / Settings), which float over it.
+          var corner = document.getElementById("corner");
+          var cornerBand = corner && corner.offsetHeight ? corner.offsetHeight + 10 + 8 : 0;
+          globalThis.__pocketContentInsets = {
+            top: 0,
+            bottom: Math.round(extra) + band + cornerBand,
+          };
+        }
+        update();
+        document.addEventListener("DOMContentLoaded", update);
+        window.addEventListener("resize", update);
+        window.addEventListener("orientationchange", update);
+      })();
+
       // First load with no explicit resolution → "Current Page" mode: the app
-      // tracks the browser content area, at scale = DPR so retina panels are crisp
-      // (kept in sync with engine.js MAX_AUTO_RENDER_SCALE; the motion-adaptive
-      // scale in blit() keeps scrolling cheap even at a high idle scale). width/
-      // height seed engine.js's boot size; index.html then live-fits the canvas to
-      // the real content box after mount (no reload on resolution change).
+      // tracks the browser content area. width/height seed engine.js's boot size;
+      // index.html then live-fits the canvas to the real content box after mount.
+      // Density and render scale are NOT written to the URL: engine.js derives them
+      // from the screen on every load (an old `scale=` in a bookmarked URL used to pin
+      // the first screen's ratio forever). ?scale= / ?density= remain manual overrides.
       (function () {
         var p = new URLSearchParams(location.search);
         if (!p.has("width") || !p.has("height")) {
-          var dpr = Math.max(1, Math.min(4, Math.round(window.devicePixelRatio || 1)));
           if (!p.has("res")) p.set("res", "page");
           p.set("width", window.innerWidth);
           p.set("height", window.innerHeight);
-          if (dpr > 1) p.set("scale", dpr);
           history.replaceState(null, "", "?" + p.toString());
         }
       })();
@@ -370,10 +511,17 @@
         setViewport,
         getViewport,
         renderScale,
+        renderInfo,
         setRenderScale,
+        setDisplaySize,
+        onDisplayChange,
+        whenPresented,
+        preload,
       } from "./engine.js";
 
       const DEMO = "pocket-home-main.vue-vapor";
+      // Engine, asset pack and app bundle download in parallel from the first moment.
+      preload(DEMO);
 
       const RESOLUTIONS = [
         { label: "Current Page", value: "page" },
@@ -464,26 +612,39 @@
       // A fixed device smaller than the area is centered 1:1; a larger one is
       // scaled down to fit. "Current Page" matches the area exactly.
 
-      function pageLogical() {
+      // Content box of the canvas area: clientWidth/Height include the safe-area padding.
+      function wrapContentSize() {
+        const cs = getComputedStyle(wrapEl);
         return {
-          w: Math.max(1, wrapEl.clientWidth),
-          h: Math.max(1, wrapEl.clientHeight),
+          w: wrapEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+          h: wrapEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
         };
+      }
+
+      function pageLogical() {
+        const { w, h } = wrapContentSize();
+        return { w: Math.max(1, Math.floor(w)), h: Math.max(1, Math.floor(h)) };
       }
 
       function layoutCanvas() {
         const { w: lw, h: lh } = getViewport();
-        const k = Math.min(1, wrapEl.clientWidth / lw, wrapEl.clientHeight / lh);
-        canvasEl.style.width = Math.round(lw * k) + "px";
-        canvasEl.style.height = Math.round(lh * k) + "px";
+        const box = wrapContentSize();
+        const k = Math.min(1, box.w / lw, box.h / lh);
+        const cssW = Math.round(lw * k);
+        const cssH = Math.round(lh * k);
+        canvasEl.style.width = cssW + "px";
+        canvasEl.style.height = cssH + "px";
+        // GPU path: the backing store follows the displayed size in device pixels.
+        setDisplaySize(cssW, cssH);
         updateResInfo(k);
       }
 
       function updateResInfo(k) {
         const { w: lw, h: lh } = getViewport();
-        const scale = renderScale();
+        const info = renderInfo();
         let text = `${lw} × ${lh}`;
-        if (scale > 1) text += `  ${scale}×`;
+        text += `  ${+info.scale.toFixed(2)}×`;
+        text += info.backend === "gpu" ? ` GPU @${info.density}x` : ` CPU`;
         if (k && k < 0.999) text += `  Fit ${Math.round(k * 100)}%`;
         resLabelEl.textContent = text;
       }
@@ -498,7 +659,6 @@
           p.set("res", selection);
           p.set("width", String(lw));
           p.set("height", String(lh));
-          p.set("scale", String(renderScale()));
           history.replaceState(null, "", "?" + p.toString());
         }
       }
@@ -508,15 +668,18 @@
         selectResOption(val);
         gamepadEl.classList.toggle("show", HANDHELD_VALUES.has(val));
         updateFlip();
-        requestAnimationFrame(() => {
-          if (selection === "page") {
-            const { w, h } = pageLogical();
-            applyLogical(w, h);
-          } else {
-            const [w, h] = val.split("x").map(Number);
-            applyLogical(w, h);
-          }
-        });
+        return new Promise((resolve) =>
+          requestAnimationFrame(() => {
+            if (selection === "page") {
+              const { w, h } = pageLogical();
+              applyLogical(w, h);
+            } else {
+              const [w, h] = val.split("x").map(Number);
+              applyLogical(w, h);
+            }
+            resolve();
+          }),
+        );
       }
 
       function flipRes() {
@@ -667,33 +830,58 @@
       });
 
       // ── Render-scale selector ──────────────────────────
-      // 1×–4×. The native screen DPR is labelled "(native)". 1× renders at the
-      // logical size (the browser upscales on HiDPI panels); higher values
-      // supersample — 2× on a 2× panel is crisp, 3×/4× is sharper.
+      // GPU (WebGL2) path: always the panel's native resolution — nothing to choose.
+      // Software fallback: 1×–4× integer scale, defaulting to the screen's density.
 
-      const nativeDpr = Math.max(1, Math.min(4, Math.round(window.devicePixelRatio || 1)));
       const scaleSel = document.getElementById("render-scale");
-      for (let s = 1; s <= 4; s++) {
-        const opt = document.createElement("option");
-        opt.value = String(s);
-        opt.textContent = s + "×" + (s === nativeDpr ? " (native)" : "");
-        scaleSel.appendChild(opt);
+      function buildScaleOptions() {
+        scaleSel.textContent = "";
+        const info = renderInfo();
+        if (info.backend === "gpu") {
+          const opt = document.createElement("option");
+          opt.textContent = `Native ${+info.dpr.toFixed(2)}× (GPU)`;
+          scaleSel.appendChild(opt);
+          scaleSel.disabled = true;
+          return;
+        }
+        scaleSel.disabled = false;
+        const nativeDensity = info.density;
+        for (let s = 1; s <= 4; s++) {
+          const opt = document.createElement("option");
+          opt.value = String(s);
+          opt.textContent = s + "×" + (s === nativeDensity ? " (native)" : "");
+          scaleSel.appendChild(opt);
+        }
+        scaleSel.value = String(renderScale());
       }
-      scaleSel.value = String(renderScale());
       scaleSel.addEventListener("change", () => {
         setRenderScale(Number(scaleSel.value));
-        const p = new URLSearchParams(location.search);
-        p.set("scale", String(renderScale()));
-        history.replaceState(null, "", "?" + p.toString());
         layoutCanvas();
       });
 
       // ── Boot ────────────────────────────────────────────
 
+      // Never leave a blank page (a failed load, stalled frames): show whatever is there.
+      const reveal = () => document.documentElement.classList.add("ready");
+      setTimeout(reveal, 4000);
+
       await mount(canvasEl, { onLog: log });
+      buildScaleOptions();
+      // Moving the window to a screen with another pixel ratio: re-fit (engine.js reloads the
+      // app at the new density when it changes).
+      onDisplayChange(() => {
+        buildScaleOptions();
+        applyRes(selection);
+      });
       await load(DEMO);
 
-      applyRes(currentSelection());
+      await applyRes(currentSelection());
+      // Reveal once the dashboard has its data (the app sets __pocketAppReady) and a frame of
+      // it at the real size is on screen (see html.ready): no placeholder is ever shown.
+      (function revealWhenReady() {
+        if (globalThis.__pocketAppReady) whenPresented().then(reveal);
+        else requestAnimationFrame(revealWhenReady);
+      })();
     </script>
   </body>
 </html>

@@ -12,6 +12,7 @@ import { extractHostBuildInputs } from "@pocketjs/framework/manifest";
 import { frameworkRoot, PROJECT_ROOT } from "./paths.ts";
 import { IOS_TAKEOVER_HOST } from "./ios/paths.ts";
 import { resolveIosNativeBuildPlan } from "./ios-native/profile.ts";
+import { ensureStubSdk } from "./ios-native/stub-sdk.ts";
 import {
   type IosNativeTier,
   IOS_NATIVE_TIERS,
@@ -22,10 +23,43 @@ import {
 const fw = frameworkRoot();
 const HOST_ROOT = IOS_TAKEOVER_HOST;
 const DEVICE_SSH_PORT = 22;
+/** Pocket Home's iOS engine crate (pocket-apple ABI + live viewport); builds on engineRoot()'s crates. */
+const TAKEOVER_ENGINE = join(PROJECT_ROOT, "engine/ios-takeover");
 const BUNDLE_NAME = "PocketHome.app";
 const BUNDLE_ID = "dev.pocket-home.dashboard";
-const INSTALL_PATH = `/Applications/${BUNDLE_NAME}`;
+/**
+ * Where the app installs: /Applications on rootful jailbreaks (iOS 3-14), /var/jb/Applications on
+ * rootless ones (Dopamine, palera1n rootless: iOS 15+), whose system volume stays read-only.
+ */
+function installPath(port: number): string {
+  const rootless = remote(port, "test -d /var/jb/Applications").exitCode === 0;
+  return `${rootless ? "/var/jb/Applications" : "/Applications"}/${BUNDLE_NAME}`;
+}
+const APP_ICON_SOURCE = join(
+  PROJECT_ROOT,
+  "hosts/ios/app/App_Resources/iOS/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png",
+);
+/** [file, px]: iPhone 57/114 (iOS 6), 120/180 (7+); iPad 72/144 (6), 76/152 (7+). */
+const APP_ICONS: readonly (readonly [string, number])[] = [
+  ["Icon.png", 57],
+  ["Icon@2x.png", 114],
+  ["Icon-72.png", 72],
+  ["Icon-72@2x.png", 144],
+  ["Icon-76.png", 76],
+  ["Icon-76@2x.png", 152],
+  ["Icon-60@2x.png", 120],
+  ["Icon-60@3x.png", 180],
+];
 const STATUS_PATH = "/private/var/tmp/pocketjs-ios-native.status.json";
+/** GPU renderer sources in hosts/ios/takeover (shared with tools/ios-app/pocket-apple-framework.ts). */
+const RENDERER_SOURCES = [
+  "PocketRenderer.h",
+  "PocketRenderer.m",
+  "PocketRenderBackend.h",
+  "PocketGLBackend.m",
+  "PocketMetalBackend.m",
+  "PocketRenderer.metal",
+];
 
 interface CommandResult {
   readonly exitCode: number;
@@ -144,8 +178,13 @@ function manifestPath(): string {
   return join(PROJECT_ROOT, "pocket.json");
 }
 
-function planPath(tier: IosNativeTier): string {
-  return join(PROJECT_ROOT, ".pocket/ios-native", tier.id, "pocket-home.plan.json");
+function planPath(tier: IosNativeTier, density: number): string {
+  return join(PROJECT_ROOT, ".pocket/ios-native", tier.id, `pocket-home.d${density}.plan.json`);
+}
+
+/** Bundle name of the guest baked at `density` (runtime.m loads `<name>.js` + `<name>.pak`). */
+function guestName(appOutput: string, density: number): string {
+  return `${appOutput}@${density}x`;
 }
 
 function guestDirectory(tier: IosNativeTier): string {
@@ -170,19 +209,32 @@ function engineRoot(): string {
   return engine;
 }
 
+/**
+ * SSH options for jailbroken devices. Their OpenSSH (iOS 3–9 era Cydia builds) offers only
+ * ssh-rsa (or DSA, which current ssh cannot use at all) host keys and checks RSA user keys with
+ * SHA-1; current macOS ssh disables both by default, so they are enabled for these connections
+ * only (no ~/.ssh/config changes). The tunnel's local port changes every run, so the device's
+ * host key is not recorded in known_hosts.
+ */
+const DEVICE_SSH_OPTIONS = [
+  "-o",
+  "BatchMode=yes",
+  "-o",
+  "ConnectTimeout=5",
+  "-o",
+  "StrictHostKeyChecking=no",
+  "-o",
+  "UserKnownHostsFile=/dev/null",
+  "-o",
+  "LogLevel=ERROR",
+  "-o",
+  "HostKeyAlgorithms=+ssh-rsa",
+  "-o",
+  "PubkeyAcceptedAlgorithms=+ssh-rsa",
+];
+
 function remote(port: number, command: string): CommandResult {
-  return run("ssh", [
-    "-p",
-    String(port),
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "ConnectTimeout=5",
-    "-o",
-    "StrictHostKeyChecking=no",
-    "root@127.0.0.1",
-    command,
-  ]);
+  return run("ssh", ["-p", String(port), ...DEVICE_SSH_OPTIONS, "root@127.0.0.1", command]);
 }
 
 function mustRemote(port: number, command: string): string {
@@ -259,19 +311,36 @@ function listTiers(): void {
   console.log("iOS 6.x armv7: PocketJS `iphone4s` host (separate incompatible toolchain).");
 }
 
+function tierArch(tier: IosNativeTier): string {
+  return tier.clangTarget.split("-")[0];
+}
+
+/** Whether the SDK's libSystem stub lists `arch` (else linking fails). */
+function sdkLinksArch(sdk: string, arch: string): boolean {
+  for (const stub of ["usr/lib/libSystem.tbd", "usr/lib/libSystem.B.tbd"]) {
+    const path = join(sdk, stub);
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, "utf8").slice(0, 4096);
+    // tbd v4: "targets: [ armv7-ios, ... ]"; tbd v2/v3: "archs: [ armv7, arm64 ]".
+    if (new RegExp(`[\\[ ,]${arch}(-ios)?[\\] ,]`).test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * iPhoneOS SDK for the tier: POCKET_IOS_SDK when set, else Xcode's when it links the tier's
+ * architecture, else a link SDK generated from Xcode's (tools/ios-native/stub-sdk.ts — current
+ * Xcode ships arm64 stubs only, so every 32-bit tier takes this path; Xcode is not modified).
+ */
+function iosSdkPath(tier: IosNativeTier): string {
+  if (process.env.POCKET_IOS_SDK) return process.env.POCKET_IOS_SDK;
+  const xcode = mustRun("xcrun", ["--sdk", "iphoneos", "--show-sdk-path"]);
+  return sdkLinksArch(xcode, tierArch(tier)) ? xcode : ensureStubSdk(xcode, tierArch(tier));
+}
+
 async function doctor(tier: IosNativeTier): Promise<void> {
   let ok = true;
-  for (const name of [
-    "bun",
-    "cargo",
-    "rustup",
-    "xcrun",
-    "ldid",
-    "idevice_id",
-    "iproxy",
-    "ssh",
-    "scp",
-  ]) {
+  for (const name of ["bun", "cargo", "rustup", "xcrun", "idevice_id", "iproxy", "ssh", "scp"]) {
     const path = commandPath(name);
     ok = check(name, path !== undefined, path ?? "not found") && ok;
   }
@@ -294,7 +363,27 @@ async function doctor(tier: IosNativeTier): Promise<void> {
           ? "installed"
           : "rustup toolchain install nightly && rustup component add rust-src --toolchain nightly",
       ) && ok;
+  } else if (commandPath("rustup")) {
+    // Stable tiers link the prebuilt std for their triple (a rustup target, per toolchain).
+    const installed = run("rustup", ["target", "list", "--installed"], { cwd: TAKEOVER_ENGINE })
+      .stdout.split("\n")
+      .map((line) => line.trim());
+    ok =
+      check(
+        `Rust std for ${tier.rustTargetTriple}`,
+        installed.includes(tier.rustTargetTriple),
+        installed.includes(tier.rustTargetTriple)
+          ? "installed"
+          : `rustup target add ${tier.rustTargetTriple}`,
+      ) && ok;
   }
+  const sdk = commandPath("xcrun") ? iosSdkPath(tier) : "";
+  ok =
+    check(
+      `iPhoneOS SDK links ${tierArch(tier)}`,
+      sdk !== "" && sdkLinksArch(sdk, tierArch(tier)),
+      sdk || "xcrun not found",
+    ) && ok;
   if (!ok) process.exit(1);
 }
 
@@ -305,30 +394,41 @@ async function buildAll(): Promise<void> {
 }
 
 async function build(tier: IosNativeTier): Promise<void> {
+  const sdk = iosSdkPath(tier);
   const manifest = JSON.parse(readFileSync(manifestPath(), "utf8"));
-  const plan = resolveIosNativeBuildPlan(manifest, tier.id);
-  mkdirSync(dirname(planPath(tier)), { recursive: true });
-  writeFileSync(planPath(tier), JSON.stringify(plan, null, 2) + "\n");
-  const inputs = extractHostBuildInputs(plan, { expectedTarget: tier.targetId });
-
+  // A legacy stack deploying through this tier (tools/ios-device.ts ship) passes its phone
+  // canvas: pocket.json's tablet canvas would be squeezed onto a 320x480 screen.
+  const legacyLogical = process.env.POCKET_IOS_LEGACY_LOGICAL?.split(",").map(Number);
+  if (legacyLogical?.length === 2 && legacyLogical.every((n) => Number.isInteger(n) && n > 0)) {
+    manifest.app.viewport.fixed.logical = legacyLogical;
+  }
+  // One guest per density the tier's devices have (glyphs and icons are baked per density): the
+  // app loads the one matching the screen, so 1x iPads and 2x/3x phones all draw text 1:1.
+  rmSync(guestDirectory(tier), { recursive: true, force: true });
+  const guests = tier.rasterDensities.map((guestDensity) => {
+    const plan = resolveIosNativeBuildPlan(manifest, tier.id, guestDensity);
+    const planFile = planPath(tier, guestDensity);
+    mkdirSync(dirname(planFile), { recursive: true });
+    writeFileSync(planFile, JSON.stringify(plan, null, 2) + "\n");
+    const guestInputs = extractHostBuildInputs(plan, { expectedTarget: tier.targetId });
+    const guestDir = join(guestDirectory(tier), `d${guestDensity}`);
+    mkdirSync(guestDir, { recursive: true });
+    mustRun(process.execPath, [
+      join(PROJECT_ROOT, "tools/build.ts"),
+      `--plan=${planFile}`,
+      `--project-root=${PROJECT_ROOT}`,
+      `--outdir=${guestDir}`,
+    ]);
+    const javaScript = join(guestDir, `${guestInputs.appOutput}.js`);
+    const pak = join(guestDir, `${guestInputs.appOutput}.pak`);
+    if (!existsSync(javaScript) || !existsSync(pak)) {
+      throw new Error("ios-native: guest build did not produce .js and .pak artifacts");
+    }
+    return { density: guestDensity, plan: planFile, inputs: guestInputs, javaScript, pak };
+  });
+  const inputs = (guests.find((g) => g.density === tier.defaultRasterDensity) ?? guests[0]!).inputs;
   const [logicalW, logicalH] = inputs.viewport.logical;
   const density = inputs.viewport.rasterDensity;
-
-  const guestDir = guestDirectory(tier);
-  rmSync(guestDir, { recursive: true, force: true });
-  mkdirSync(guestDir, { recursive: true });
-  mustRun(process.execPath, [
-    join(PROJECT_ROOT, "tools/build.ts"),
-    `--plan=${planPath(tier)}`,
-    `--project-root=${PROJECT_ROOT}`,
-    `--outdir=${guestDir}`,
-  ]);
-
-  const guestJavaScript = join(guestDir, `${inputs.appOutput}.js`);
-  const guestPak = join(guestDir, `${inputs.appOutput}.pak`);
-  if (!existsSync(guestJavaScript) || !existsSync(guestPak)) {
-    throw new Error("ios-native: guest build did not produce .js and .pak artifacts");
-  }
 
   const rustTargetDir = join(homedir(), ".cache/pocket-stack/ios-native", tier.id, "rust-target");
   mkdirSync(rustTargetDir, { recursive: true });
@@ -338,25 +438,42 @@ async function build(tier: IosNativeTier): Promise<void> {
   const rustc = tier.requiresRustNightly
     ? mustRun("rustup", ["which", "--toolchain", "nightly", "rustc"])
     : mustRun("rustup", ["which", "rustc"]);
+  const armv = tierArch(tier).startsWith("armv");
   const rustEnv = {
     ...process.env,
     RUSTC: rustc,
     CARGO_TARGET_DIR: rustTargetDir,
     IPHONEOS_DEPLOYMENT_TARGET: tier.deploymentTarget,
+    // C built by crates (QuickJS via rquickjs-sys) as ARM, not Thumb: see NO_THUMB below.
+    // TARGET_CFLAGS reaches only the iOS target, not build scripts compiled for the Mac.
+    ...(armv
+      ? { TARGET_CFLAGS: [process.env.TARGET_CFLAGS, "-marm"].filter(Boolean).join(" ") }
+      : {}),
   };
   const cargoArgs = [
     "build",
-    "-p",
-    "pocket-apple",
     "--release",
     "--locked",
     "--target",
     tier.rustTargetSpec ?? tier.rustTargetTriple,
   ];
-  if (tier.requiresRustNightly) cargoArgs.push("-Z", "build-std=core,alloc");
-  mustRun(cargo, cargoArgs, { cwd: engineRoot(), env: rustEnv });
+  // pocket-apple needs std (anyhow, taffy -> slotmap, rquickjs), so build all of it for targets
+  // rustc ships no prebuilt std for (the 32-bit ARM specs).
+  if (tier.requiresRustNightly) cargoArgs.push("-Z", "build-std=std,panic_abort");
+  // Current nightlies only accept a custom `.json` target spec behind this flag.
+  if (tier.requiresRustNightly && tier.rustTargetSpec?.endsWith(".json")) {
+    cargoArgs.push("-Z", "json-target-spec");
+  }
+  mustRun(cargo, cargoArgs, { cwd: TAKEOVER_ENGINE, env: rustEnv });
 
-  const rustLibrary = join(rustTargetDir, `${tier.rustTargetTriple}/release/libpocket_apple.a`);
+  // Cargo names the output directory after a custom target spec's file stem, not the triple.
+  const rustTargetDirName = tier.rustTargetSpec
+    ? tier.rustTargetSpec
+        .split("/")
+        .pop()!
+        .replace(/\.json$/, "")
+    : tier.rustTargetTriple;
+  const rustLibrary = join(rustTargetDir, `${rustTargetDirName}/release/libpocket_home_ios.a`);
   if (!existsSync(rustLibrary)) {
     throw new Error(`ios-native: missing Rust static library at ${rustLibrary}`);
   }
@@ -365,38 +482,71 @@ async function build(tier: IosNativeTier): Promise<void> {
   rmSync(bundle, { recursive: true, force: true });
   mkdirSync(bundle, { recursive: true });
   cpSync(join(HOST_ROOT, "Info.plist"), join(bundle, "Info.plist"));
+  // SpringBoard refuses (and hides) apps whose MinimumOSVersion is above the running iOS.
+  mustRun("plutil", [
+    "-replace",
+    "MinimumOSVersion",
+    "-string",
+    tier.deploymentTarget,
+    join(bundle, "Info.plist"),
+  ]);
   cpSync(join(HOST_ROOT, "PkgInfo"), join(bundle, "PkgInfo"));
-  cpSync(guestJavaScript, join(bundle, `${inputs.appOutput}.js`));
-  cpSync(guestPak, join(bundle, `${inputs.appOutput}.pak`));
+  // Home-screen icons (names listed in Info.plist), scaled from the modern app's icon.
+  for (const [name, size] of APP_ICONS) {
+    mustRun("sips", [
+      "-z",
+      String(size),
+      String(size),
+      APP_ICON_SOURCE,
+      "--out",
+      join(bundle, name),
+    ]);
+  }
+  for (const guest of guests) {
+    const name = guestName(inputs.appOutput, guest.density);
+    cpSync(guest.javaScript, join(bundle, `${name}.js`));
+    cpSync(guest.pak, join(bundle, `${name}.pak`));
+  }
 
-  const iosUIKit = join(fw, "engine/ios/uikit");
-  const iosInclude = join(fw, "engine/ios/include");
+  // Below iOS 10 the engine needs clock_gettime / CCRandomGenerateBytes from us (legacy-shims.c).
+  const deploymentMajor = Number(tier.deploymentTarget.split(".")[0]);
+  const legacyShims = deploymentMajor < 10 ? [join(HOST_ROOT, "legacy-shims.c")] : [];
+  // Below iOS 6 (no LC_MAIN) the entry point comes from crt1.3.1.o, which Xcode no longer ships:
+  // legacy-start.S provides it, linked with -nostartfiles.
+  const legacyStart = deploymentMajor < 6 ? [join(HOST_ROOT, "legacy-start.S")] : [];
+  // The host view (PocketSurfaceView) and engine header are Pocket Home's copies (live viewport,
+  // vsync frames, timings, the GPU renderer in PocketRenderer + its Metal / OpenGL ES backends); the engine is
+  // engine/ios-takeover.
+  const iosUIKit = HOST_ROOT;
+  const iosInclude = join(TAKEOVER_ENGINE, "include");
   const buildId = hashInputs([
-    planPath(tier),
-    guestJavaScript,
-    guestPak,
+    ...guests.flatMap((guest) => [guest.plan, guest.javaScript, guest.pak]),
     join(HOST_ROOT, "Info.plist"),
     join(HOST_ROOT, "PkgInfo"),
     join(HOST_ROOT, "runtime.m"),
     join(iosInclude, "pocket_apple.h"),
     join(iosUIKit, "PocketSurfaceView.h"),
     join(iosUIKit, "PocketSurfaceView.m"),
-    join(fw, "engine/ios/src/lib.rs"),
-    { label: "native/libpocket_apple.a", path: rustLibrary },
+    ...RENDERER_SOURCES.map((name) => join(iosUIKit, name)),
+    join(TAKEOVER_ENGINE, "src/lib.rs"),
+    ...legacyShims,
+    ...legacyStart,
+    { label: "native/libpocket_home_ios.a", path: rustLibrary },
   ]);
 
   const executable = join(bundle, "PocketHome");
-  const clangArgs = [
-    "--sdk",
-    "iphoneos",
-    "clang",
-    "-target",
-    tier.clangTarget,
+  const clang = ["--sdk", "iphoneos", "clang", "-target", tier.clangTarget, "-isysroot", sdk];
+  const compileArgs = [
+    ...clang,
+    // Keep `[X alloc]` a message send: clang otherwise calls objc_alloc (iOS 12.2+ runtime).
+    "-fno-objc-convert-messages-to-runtime-calls",
+    // 32-bit ARM: no Thumb code at all (NO_THUMB below).
+    ...(tierArch(tier).startsWith("armv") ? ["-marm"] : []),
     "-fobjc-arc",
     "-fblocks",
     "-O2",
-    `-DPOCKETJS_BUILD_ID=${buildId}`,
-    `-DPOCKETJS_APP_OUTPUT=${inputs.appOutput}`,
+    `-DPOCKETJS_BUILD_ID="${buildId}"`,
+    `-DPOCKETJS_APP_OUTPUT="${inputs.appOutput}"`,
     `-DPOCKETJS_LOGICAL_WIDTH=${logicalW}`,
     `-DPOCKETJS_LOGICAL_HEIGHT=${logicalH}`,
     `-DPOCKETJS_RASTER_DENSITY=${density}`,
@@ -407,9 +557,39 @@ async function build(tier: IosNativeTier): Promise<void> {
     iosUIKit,
     "-I",
     iosInclude,
+  ];
+  // Compile, then link without -fobjc-arc: for deployment targets below iOS 9 the driver would
+  // otherwise link libarclite, which current Xcode no longer ships (iOS 5+ runtimes have ARC).
+  const objectDir = join(dirname(bundle), "obj");
+  rmSync(objectDir, { recursive: true, force: true });
+  mkdirSync(objectDir, { recursive: true });
+  const objects = [
     join(HOST_ROOT, "runtime.m"),
     join(iosUIKit, "PocketSurfaceView.m"),
+    ...RENDERER_SOURCES.filter((name) => name.endsWith(".m")).map((name) => join(iosUIKit, name)),
+    ...legacyShims,
+    ...legacyStart,
+  ].map((source) => {
+    const object = join(
+      objectDir,
+      `${source
+        .split("/")
+        .pop()!
+        .replace(/\.[mcS]$/, "")}.o`,
+    );
+    mustRun("xcrun", [...compileArgs, "-c", source, "-o", object]);
+    return object;
+  });
+  mustRun("xcrun", [
+    ...clang,
+    ...objects,
     rustLibrary,
+    // Resolve every import in whichever system library exports it on the device: symbols moved
+    // between libraries across iOS releases (NSRunLoop, NSTimer, NSDate... live in
+    // CoreFoundation in the SDK, in Foundation on older iOS), and two-level bindings to the
+    // SDK's library would abort the launch there.
+    "-Wl,-flat_namespace",
+    ...(legacyStart.length > 0 ? ["-nostartfiles"] : []),
     "-framework",
     "Foundation",
     "-framework",
@@ -418,22 +598,70 @@ async function build(tier: IosNativeTier): Promise<void> {
     "QuartzCore",
     "-framework",
     "CoreGraphics",
+    "-framework",
+    "OpenGLES",
+    // Metal backend: arm64 only (no Metal on the 32-bit devices, whose builds compile it out).
+    ...(armv ? [] : ["-framework", "Metal"]),
     "-lresolv",
     "-Wl,-dead_strip",
     "-o",
     executable,
-  ];
-  mustRun("xcrun", clangArgs);
+  ]);
+  // NO_THUMB: the current linker writes Thumb code addresses without the Thumb bit — LC_MAIN's
+  // entry (a Thumb `main` died on its second instruction) and function pointers stored in data
+  // (QuickJS's allocator table: SIGILL in js_def_calloc). Every address is then entered in ARM
+  // state, so every function must be ARM: the host and crate C are built with -marm, Rust
+  // emits ARM for these specs. Fail here rather than on the device.
+  if (tierArch(tier).startsWith("armv")) {
+    const thumb = mustRun("xcrun", ["nm", "-m", executable])
+      .split("\n")
+      .filter((line) => line.includes("[Thumb]"));
+    if (thumb.length > 0) {
+      throw new Error(
+        `ios-native: ${thumb.length} Thumb function(s) in the ${tier.id} executable (the linker ` +
+          `drops their Thumb bit, so they crash when called), e.g.\n${thumb.slice(0, 5).join("\n")}`,
+      );
+    }
+  }
+  // arm64: the Metal backend's shaders, precompiled (PocketMetalBackend.m loads them).
+  if (!armv) {
+    const air = join(objectDir, "PocketRenderer.air");
+    mustRun("xcrun", [
+      "-sdk",
+      "iphoneos",
+      "metal",
+      `-mios-version-min=${tier.deploymentTarget}`,
+      "-c",
+      join(HOST_ROOT, "PocketRenderer.metal"),
+      "-o",
+      air,
+    ]);
+    mustRun("xcrun", [
+      "-sdk",
+      "iphoneos",
+      "metallib",
+      air,
+      "-o",
+      join(bundle, "PocketRenderer.metallib"),
+    ]);
+  }
   mustRun("chmod", ["755", executable]);
-  mustRun("ldid", ["-S", executable]);
+  // Jailbreaks accept a pseudo/ad-hoc signature: ldid when installed, else macOS codesign
+  // (which emits SHA-1 + SHA-256 code directories for pre-iOS 11 deployment targets).
+  if (commandPath("ldid")) mustRun("ldid", ["-S", executable]);
+  else mustRun("codesign", ["--force", "--sign", "-", "--timestamp=none", executable]);
   mustRun("plutil", ["-lint", join(bundle, "Info.plist")]);
 
   const fileNames = [
     "PocketHome",
     "Info.plist",
     "PkgInfo",
-    `${inputs.appOutput}.js`,
-    `${inputs.appOutput}.pak`,
+    "PocketRenderer.metallib",
+    ...APP_ICONS.map(([name]) => name),
+    ...guests.flatMap((guest) => {
+      const name = guestName(inputs.appOutput, guest.density);
+      return [`${name}.js`, `${name}.pak`];
+    }),
   ];
   const files = Object.fromEntries(
     fileNames
@@ -454,7 +682,10 @@ async function build(tier: IosNativeTier): Promise<void> {
 
   console.log(`built ${bundle}`);
   console.log(mustRun("file", [executable]));
-  console.log(`build_id=${buildId} tier=${tier.id} logical=${logicalW}x${logicalH}@${density}`);
+  console.log(
+    `build_id=${buildId} tier=${tier.id} logical=${logicalW}x${logicalH} ` +
+      `densities=${tier.rasterDensities.join(",")}`,
+  );
 }
 
 async function deploy(tier: IosNativeTier, options: { forceBuild?: boolean } = {}): Promise<void> {
@@ -471,19 +702,25 @@ async function deploy(tier: IosNativeTier, options: { forceBuild?: boolean } = {
   await withTunnel(async (port) => {
     console.log(`ios-native: connected (tier ${tier.id})`);
     remote(port, "killall PocketHome 2>/dev/null || true");
-    remote(port, `rm -rf ${INSTALL_PATH}`);
+    const target = installPath(port);
+    remote(port, `rm -rf ${target} /Applications/${BUNDLE_NAME} 2>/dev/null`);
     mustRun("scp", [
+      // Legacy SCP protocol: current scp defaults to SFTP, which old device builds may lack.
+      "-O",
       "-r",
       "-P",
       String(port),
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "StrictHostKeyChecking=no",
+      ...DEVICE_SSH_OPTIONS,
       bundle,
-      `root@127.0.0.1:${INSTALL_PATH}`,
+      `root@127.0.0.1:${target}`,
     ]);
-    mustRemote(port, "uicache");
+    if (target.startsWith("/var/jb/")) {
+      // uikittools-ng (rootless): register just this bundle.
+      mustRemote(port, `uicache -p ${target}`);
+    } else {
+      // SpringBoard's app registry belongs to `mobile`; root's uicache did not refresh it on iOS 9.
+      mustRemote(port, "su mobile -c uicache 2>/dev/null || uicache");
+    }
     console.log("ios-native: deployed");
   });
 }
@@ -492,7 +729,12 @@ async function launch(_tier: IosNativeTier): Promise<void> {
   await withTunnel(async (port) => {
     remote(port, "killall PocketHome 2>/dev/null || true");
     await Bun.sleep(500);
-    mustRemote(port, `uiopen ${BUNDLE_ID}://`);
+    // As `mobile` (SpringBoard's user). SpringBoard ignores URL launches while the screen is
+    // locked, so the device must be unlocked.
+    mustRemote(
+      port,
+      `cd /tmp; su mobile -c "uiopen ${BUNDLE_ID}://" 2>/dev/null || uiopen ${BUNDLE_ID}://`,
+    );
     console.log("ios-native: launched");
     await Bun.sleep(2000);
     const statusResult = remote(port, `cat ${STATUS_PATH} 2>/dev/null`);

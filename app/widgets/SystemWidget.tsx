@@ -1,10 +1,11 @@
 import { onMounted, onScopeDispose, ref } from "vue";
 import { Text, View } from "@pocketjs/framework/components";
-import { after, TICKS_PER_SECOND, virtualFrame } from "@pocketjs/framework/clock";
+import { after, simulationHz, TICKS_PER_SECOND, virtualFrame } from "@pocketjs/framework/clock";
 import { SURFACE_STAT } from "../ui/tokens.ts";
 
 function formatUptime(frames: number): string {
-  const totalSeconds = Math.floor(frames / TICKS_PER_SECOND);
+  // Virtual frames run at the simulation rate (the host may run fewer than TICKS_PER_SECOND).
+  const totalSeconds = Math.floor(frames / simulationHz());
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;

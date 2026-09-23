@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { IOS_APP_SHELL } from "../ios/paths.ts";
 import { syncStagedPocketIntoPlatformApp } from "./sync-native-app.ts";
@@ -70,6 +70,35 @@ async function spawn(
   return { exitCode, stdout: "", stderr: "" };
 }
 
+/**
+ * `ns prepare` writes `app/package.json` (`main: "bundle"` + runtime identity) after webpack.
+ * This one-shot path skips prepare, so write it the same way — without it the runtime aborts at
+ * boot with "The specified module does not exist: …/iossimulator.app/app".
+ */
+function writeRuntimePackageJson(): void {
+  const shellPackage = JSON.parse(readFileSync(join(SHELL_DIR, "package.json"), "utf8")) as {
+    name: string;
+  };
+  const runtimePackageName = "@nativescript/ios-quickjs";
+  const runtimePackagePath = join(SHELL_DIR, "node_modules", runtimePackageName, "package.json");
+  const runtimeVersion = existsSync(runtimePackagePath)
+    ? (JSON.parse(readFileSync(runtimePackagePath, "utf8")) as { version: string }).version
+    : undefined;
+  const packageData = {
+    name: shellPackage.name,
+    id: "dev.pocket-home.dashboard",
+    ios: {
+      runtimePackageName,
+      ...(runtimeVersion ? { runtime: { version: runtimeVersion } } : {}),
+    },
+    main: "bundle",
+  };
+  writeFileSync(
+    join(SHELL_DIR, "platforms/ios/iossimulator/app/package.json"),
+    JSON.stringify(packageData, null, 2) + "\n",
+  );
+}
+
 /** Webpack copy rules miss some staged pocket assets (notably `.pak`); mirror `src/assets/pocket` into the NS app folder. */
 function syncStagedPocketAssetsToPlatformApp(): void {
   syncStagedPocketIntoPlatformApp();
@@ -94,6 +123,7 @@ export async function runIosWebpackOnce(nsEnv: Record<string, string | undefined
     throw new Error("ios-app: webpack build failed");
   }
   syncStagedPocketAssetsToPlatformApp();
+  writeRuntimePackageJson();
   const bundleJs = join(SHELL_DIR, "platforms/ios", "iossimulator/app/bundle.js");
   if (!existsSync(bundleJs)) {
     throw new Error(`ios-app: webpack did not produce ${bundleJs}`);

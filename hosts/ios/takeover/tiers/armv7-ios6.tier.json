@@ -1,0 +1,13 @@
+{
+  "id": "armv7-ios6",
+  "targetId": "ios-native-armv7-ios6",
+  "hostAbi": 16,
+  "deploymentTarget": "6.0",
+  "clangTarget": "armv7-apple-ios6.0",
+  "rustTargetTriple": "armv7-apple-ios",
+  "rustTargetSpec": "hosts/ios/takeover/tiers/rust/armv7-apple-ios6.json",
+  "requiresRustNightly": true,
+  "defaultRasterDensity": 2,
+  "rasterDensities": [1, 2],
+  "description": "32-bit ARMv7, iOS 6.x jailbreak (iPhone 3GS/4/4S, iPad 2-4, iPod touch 4/5). Links against a stub SDK generated from Xcode's; engine gaps below iOS 10 come from legacy-shims.c."
+}

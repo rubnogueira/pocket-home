@@ -14,7 +14,7 @@ import { iosAppRubyEnv } from "./ensure-ios-ruby.ts";
 import { IOS_APP_SHELL } from "./ios/paths.ts";
 import {
   IOS_APP_DEFAULT_DENSITY,
-  IOS_APP_DEFAULT_TICK_HZ,
+  IOS_APP_DENSITIES,
   IOS_APP_MAX_DENSITY,
   IOS_APP_MIN_RUNTIME,
   IOS_APP_TARGET_ID,
@@ -22,10 +22,11 @@ import {
 } from "./ios-app/constants.ts";
 import { resolveIosAppBuildPlan } from "./ios-app/profile.ts";
 import { admissibleIosAppSimulators, pickIosAppSimulator } from "./ios-app/simulators.ts";
-import { stageGuestIntoShell } from "./ios-app/stage-guest.ts";
+import { stageGuestIntoShell, type GuestVariantArtifacts } from "./ios-app/stage-guest.ts";
 import { POCKET_IOS_WEBPACK_DONE, runIosWebpackOnce } from "./ios-app/webpack-once.ts";
 import { mergeIosPluginsXcconfig } from "./ios-app/merge-xcconfig.ts";
-import { diagnoseIosAppStaging } from "./ios-app/sync-native-app.ts";
+import { installPocketAppleFramework } from "./ios-app/pocket-apple-framework.ts";
+import { diagnoseIosAppStaging, syncAppResourcesIntoPlatform } from "./ios-app/sync-native-app.ts";
 import { buildIosSimulatorApp, installAndLaunchSimulatorApp } from "./ios-app/xcode-simulator.ts";
 
 const SHELL_DIR = IOS_APP_SHELL;
@@ -163,10 +164,10 @@ function ensureSwiftUiBootInPlatformXcconfigs(): void {
   }
 }
 
-const PLAN_PATH = join(PROJECT_ROOT, ".pocket/ios-app/pocket-home.plan.json");
+const PLAN_DIR = join(PROJECT_ROOT, ".pocket/ios-app");
+const planPathFor = (density: number) => join(PLAN_DIR, `pocket-home.d${density}.plan.json`);
 const GUEST_DIR = join(PROJECT_ROOT, "dist/ios-app/guest");
 const STAMP_PATH = join(PROJECT_ROOT, "dist/ios-app/build-stamp.json");
-const DEFAULT_TICK_HZ = IOS_APP_DEFAULT_TICK_HZ;
 
 interface CommandResult {
   readonly exitCode: number;
@@ -175,15 +176,13 @@ interface CommandResult {
 }
 
 interface BuildStamp {
-  readonly tickHz: number;
-  readonly density: number;
+  readonly appOutput: string;
+  readonly variants: readonly { density: number; tickHz: number }[];
 }
 
 interface GuestArtifacts {
   readonly appOutput: string;
-  readonly bundle: string;
-  readonly pak: string;
-  readonly planPath: string;
+  readonly variants: readonly GuestVariantArtifacts[];
 }
 
 function run(
@@ -231,6 +230,20 @@ function flagValue(args: readonly string[], name: string): string | undefined {
   if (inline) return inline.slice(name.length + 1);
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+/** Densities / tick rates to build: the pinned flag value, else every staged default. */
+function variantMatrix(args: readonly string[]): { densities: number[]; rates: number[] } {
+  const pinnedHz = tickRateFlag(args);
+  const pinnedDensity = flagValue(args, "--density") !== undefined ? densityFlag(args) : undefined;
+  return {
+    densities: pinnedDensity !== undefined ? [pinnedDensity] : [...IOS_APP_DENSITIES],
+    rates: pinnedHz !== undefined ? [pinnedHz] : [...IOS_APP_TICK_RATES],
+  };
+}
+
+function variantDir(density: number, tickHz: number): string {
+  return join(GUEST_DIR, `d${density}-h${tickHz}`);
 }
 
 function tickRateFlag(args: readonly string[]): number | undefined {
@@ -382,42 +395,61 @@ async function listDevices(): Promise<void> {
   }
 }
 
-async function buildGuest(density: number, tickHz: number): Promise<GuestArtifacts> {
+/** Build one guest per density x tick rate (both are baked into the bundle). */
+async function buildGuests(densities: number[], rates: number[]): Promise<GuestArtifacts> {
   const manifest = JSON.parse(readFileSync(manifestPath(), "utf8"));
-  const plan = resolveIosAppBuildPlan(manifest, density);
-  mkdirSync(join(PROJECT_ROOT, ".pocket/ios-app"), { recursive: true });
-  writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2) + "\n");
-
+  mkdirSync(PLAN_DIR, { recursive: true });
   rmSync(GUEST_DIR, { recursive: true, force: true });
-  mkdirSync(GUEST_DIR, { recursive: true });
-  mustRun(process.execPath, [
-    join(PROJECT_ROOT, "tools/build.ts"),
-    `--plan=${PLAN_PATH}`,
-    `--project-root=${PROJECT_ROOT}`,
-    `--outdir=${GUEST_DIR}`,
-    `--hz=${tickHz}`,
-    "--extra-chars=0123456789",
-  ]);
-
-  const inputs = extractHostBuildInputs(plan, { expectedTarget: IOS_APP_TARGET_ID });
-  const bundle = join(GUEST_DIR, `${inputs.appOutput}.js`);
-  const pak = join(GUEST_DIR, `${inputs.appOutput}.pak`);
-  if (!existsSync(bundle) || !existsSync(pak)) {
-    throw new Error("ios-app: guest build did not produce .js and .pak");
+  let appOutput = "";
+  const variants: GuestVariantArtifacts[] = [];
+  for (const density of densities) {
+    const plan = resolveIosAppBuildPlan(manifest, density);
+    const planPath = planPathFor(density);
+    writeFileSync(planPath, JSON.stringify(plan, null, 2) + "\n");
+    appOutput = extractHostBuildInputs(plan, { expectedTarget: IOS_APP_TARGET_ID }).appOutput;
+    for (const tickHz of rates) {
+      const outdir = variantDir(density, tickHz);
+      mkdirSync(outdir, { recursive: true });
+      console.log(`ios-app: guest ${density}x @ ${tickHz} Hz`);
+      mustRun(process.execPath, [
+        join(PROJECT_ROOT, "tools/build.ts"),
+        `--plan=${planPath}`,
+        `--project-root=${PROJECT_ROOT}`,
+        `--outdir=${outdir}`,
+        `--hz=${tickHz}`,
+        "--extra-chars=0123456789",
+      ]);
+      const variant = guestVariant(appOutput, density, tickHz);
+      if (!existsSync(variant.bundlePath) || !existsSync(variant.pakPath)) {
+        throw new Error(`ios-app: guest ${density}x/${tickHz}Hz did not produce .js and .pak`);
+      }
+      variants.push(variant);
+    }
   }
-  const stamp: BuildStamp = { tickHz, density };
+  const stamp: BuildStamp = {
+    appOutput,
+    variants: variants.map(({ density, tickHz }) => ({ density, tickHz })),
+  };
   writeFileSync(STAMP_PATH, JSON.stringify(stamp, null, 2) + "\n");
-  return { appOutput: inputs.appOutput, bundle, pak, planPath: PLAN_PATH };
+  return { appOutput, variants };
 }
 
-function stageAssets(artifacts: GuestArtifacts, tickHz: number): void {
+function guestVariant(appOutput: string, density: number, tickHz: number): GuestVariantArtifacts {
+  const outdir = variantDir(density, tickHz);
+  return {
+    density,
+    tickHz,
+    bundlePath: join(outdir, `${appOutput}.js`),
+    pakPath: join(outdir, `${appOutput}.pak`),
+    planPath: planPathFor(density),
+  };
+}
+
+function stageAssets(artifacts: GuestArtifacts): void {
   stageGuestIntoShell({
     shellDir: SHELL_DIR,
     appOutput: artifacts.appOutput,
-    bundlePath: artifacts.bundle,
-    pakPath: artifacts.pak,
-    planPath: artifacts.planPath,
-    tickHz,
+    variants: artifacts.variants,
     externalGuest: false,
   });
 }
@@ -438,42 +470,49 @@ function normalizeSimulatorArgs(args: readonly string[]): string[] {
 
 async function runApp(args: readonly string[]): Promise<void> {
   const normalized = normalizeSimulatorArgs(args);
-  const density = densityFlag(normalized);
-  const requestedHz = tickRateFlag(normalized);
-  const tickHz = requestedHz ?? DEFAULT_TICK_HZ;
+  const matrix = variantMatrix(normalized);
 
   let artifacts: GuestArtifacts;
   if (normalized.includes("--no-build")) {
-    if (!existsSync(PLAN_PATH)) {
-      throw new Error("ios-app: --no-build but no plan — run build first");
+    if (!existsSync(STAMP_PATH)) {
+      throw new Error("ios-app: --no-build but no previous guest build — run build first");
     }
-    const plan = JSON.parse(readFileSync(PLAN_PATH, "utf8"));
-    const inputs = extractHostBuildInputs(plan, { expectedTarget: IOS_APP_TARGET_ID });
+    const stamp = JSON.parse(readFileSync(STAMP_PATH, "utf8")) as Partial<BuildStamp>;
+    if (!stamp.appOutput || !stamp.variants?.length) {
+      throw new Error(
+        "ios-app: --no-build but the previous build predates guest variants — rebuild",
+      );
+    }
+    const variants = stamp.variants.filter(
+      (v) => matrix.densities.includes(v.density) && matrix.rates.includes(v.tickHz),
+    );
+    if (variants.length === 0) {
+      throw new Error(
+        "ios-app: --no-build: the previous build has no guest matching --density/--hz",
+      );
+    }
     artifacts = {
-      appOutput: inputs.appOutput,
-      bundle: join(GUEST_DIR, `${inputs.appOutput}.js`),
-      pak: join(GUEST_DIR, `${inputs.appOutput}.pak`),
-      planPath: PLAN_PATH,
+      appOutput: stamp.appOutput,
+      variants: variants.map((v) => guestVariant(stamp.appOutput!, v.density, v.tickHz)),
     };
-    if (!existsSync(artifacts.bundle) || !existsSync(artifacts.pak)) {
-      throw new Error("ios-app: --no-build but guest artifacts missing");
-    }
-    if (existsSync(STAMP_PATH)) {
-      const stamp = JSON.parse(readFileSync(STAMP_PATH, "utf8")) as BuildStamp;
-      if (requestedHz !== undefined && requestedHz !== stamp.tickHz) {
-        throw new Error(`ios-app: prior build used ${stamp.tickHz} Hz — rebuild or drop --hz`);
-      }
-      if (flagValue(normalized, "--density") !== undefined && density !== stamp.density) {
-        throw new Error(`ios-app: prior build used density ${stamp.density} — rebuild`);
+    for (const v of artifacts.variants) {
+      if (!existsSync(v.bundlePath) || !existsSync(v.pakPath)) {
+        throw new Error("ios-app: --no-build but guest artifacts missing");
       }
     }
   } else {
-    artifacts = await buildGuest(density, tickHz);
+    artifacts = await buildGuests(matrix.densities, matrix.rates);
   }
 
-  stageAssets(artifacts, tickHz);
+  stageAssets(artifacts);
   await installShellDependencies();
+  // Pocket Home's PocketApple (live resize, OpenGL ES) in place of the plugin's prebuilt.
+  installPocketAppleFramework();
   await ensureIosNativeScriptPlatform();
+  const resynced = syncAppResourcesIntoPlatform();
+  if (resynced.length > 0) {
+    console.log(`ios-app: synced App_Resources into platform: ${resynced.join(", ")}`);
+  }
   ensureSwiftUiBootInPlatformXcconfigs();
   ensurePocketHomeNativeSourcesInXcodeProject();
 
@@ -526,8 +565,8 @@ Commands:
   run                 build (unless --no-build), stage shell, launch
 
 Flags (build/run):
-  --density=1..${IOS_APP_MAX_DENSITY}   raster density (default ${IOS_APP_DEFAULT_DENSITY})
-  --hz=60|120         guest tick rate (default ${DEFAULT_TICK_HZ})
+  --density=1..${IOS_APP_MAX_DENSITY}   pin one raster density (default: ${IOS_APP_DENSITIES.join(" + ")}, picked per device)
+  --hz=60|120         pin one tick rate (default: ${IOS_APP_TICK_RATES.join(" + ")}, 120 on ProMotion)
   --simulator=<name|udid>  Simulator (default: booted, else newest iPad)
   --device=<name|udid>     alias for --simulator
   --physical --udid=<udid>  USB iPhone/iPad (same NativeScript app as Simulator)
@@ -548,10 +587,9 @@ switch (command) {
     await listDevices();
     break;
   case "build": {
-    const density = densityFlag(rest);
-    const tickHz = tickRateFlag(rest) ?? DEFAULT_TICK_HZ;
-    const artifacts = await buildGuest(density, tickHz);
-    console.log(`ios-app: built ${artifacts.bundle}`);
+    const matrix = variantMatrix(rest);
+    const artifacts = await buildGuests(matrix.densities, matrix.rates);
+    console.log(`ios-app: built ${artifacts.variants.length} guest variant(s) in ${GUEST_DIR}`);
     break;
   }
   case "run":

@@ -38,7 +38,9 @@ export function Slider(props: SliderProps) {
           <Text class="text-sm text-slate-200 font-bold">-</Text>
         </Focusable>
         <View class={PROGRESS_TRACK}>
-          <View class={PROGRESS_FILL} style={{ width: `${pct}%` }} />
+          {/* Split by flex grow: the core has no percentage widths. */}
+          <View class={PROGRESS_FILL} style={{ grow: pct, basis: 0 }} />
+          <View style={{ grow: 100 - pct, basis: 0 }} />
         </View>
         <Focusable
           class="w-8 h-8 rounded-lg bg-slate-700 items-center justify-center focus:bg-slate-600 active:bg-slate-500"

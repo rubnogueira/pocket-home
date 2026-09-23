@@ -35,7 +35,7 @@ export default function HeadingCard(props: HeadingCardProps) {
     <View class="flex-row items-center gap-2 bg-transparent overflow-hidden py-2">
       {/* Icon + heading text */}
       {hasIcon || hasText ? (
-        <View class="flex-row items-center gap-1 flex-shrink overflow-hidden">
+        <View class="flex-row items-center gap-1 overflow-hidden">
           {hasIcon ? <HaIcon icon={iconKey} size={18} /> : null}
           {hasText ? (
             <Text class={textClass} style={{ maxLines: 1 }}>

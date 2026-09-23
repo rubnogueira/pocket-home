@@ -71,5 +71,8 @@
     "@parcel/watcher",
     "core-js-pure",
     "nativescript"
-  ]
+  ],
+  "patchedDependencies": {
+    "@pocketjs/framework@0.12.0": "patches/@pocketjs%2Fframework@0.12.0.patch"
+  }
 }

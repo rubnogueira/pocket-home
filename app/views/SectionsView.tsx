@@ -120,85 +120,61 @@ export interface SectionsViewProps {
   onCardReorder: (sectionIndex: number, fromIdx: number, toIdx: number) => void;
 }
 
+// Rotation / resize: nothing below re-creates nodes when the width changes. A JSX `.map` compiles
+// to one effect that rebuilds its whole list whenever anything it reads changes, so each list reads
+// only what decides its items (the sections; a section's card placements, which depend on the
+// card-column count, not on pixels), and every width-dependent number sits in a style getter —
+// a resize is a style update and a relayout. Rebuilding the dashboard's ~40 cards took ~1.9 s of
+// QuickJS on an iPad 2, during which rotation showed the old frame stretched.
+
 export default function SectionsView(props: SectionsViewProps) {
   const layout = computed(() => {
     const cw = props.contentWidth;
     const edgePad = cw >= 1100 ? 80 : cw >= 700 ? 48 : cw >= 400 ? 24 : 12;
     const innerW = cw - edgePad * 2;
     const vertPad = cw >= 700 ? 16 : 10;
-    const columnGap = cw >= 700 ? 24 : 16;
-    const sectionGap = cw >= 700 ? 24 : 16;
+    // One gap for both axes: sections wrap into rows with the same spacing (HA: 24 / 16 px).
+    const gap = cw >= 700 ? 24 : 16;
 
     const viewMaxCols = props.view.max_columns ?? DEFAULT_VIEW_COLUMNS;
     const sectionCols = Math.max(
       1,
-      Math.min(viewMaxCols, Math.floor((innerW + columnGap) / (MIN_SECTION_COL_W + columnGap))),
+      Math.min(viewMaxCols, Math.floor((innerW + gap) / (MIN_SECTION_COL_W + gap))),
     );
-
-    const sections = props.view.sections ?? [];
-    const sectionRows: { section: LovelaceViewSection; globalIndex: number }[][] = [];
-    for (let i = 0; i < sections.length; i += sectionCols) {
-      const row: { section: LovelaceViewSection; globalIndex: number }[] = [];
-      for (let c = 0; c < sectionCols && i + c < sections.length; c++) {
-        row.push({ section: sections[i + c], globalIndex: i + c });
-      }
-      sectionRows.push(row);
-    }
-
-    const approxSectionW = Math.floor((innerW - (sectionCols - 1) * columnGap) / sectionCols);
-
-    return {
-      cw,
-      edgePad,
-      innerW,
-      vertPad,
-      columnGap,
-      sectionGap,
-      sectionCols,
-      sectionRows,
-      approxSectionW,
-    };
+    // Exactly `sectionCols` of these fit on a line, so the wrap forms HA's rows.
+    const sectionW = Math.floor((innerW - (sectionCols - 1) * gap) / sectionCols);
+    return { cw, edgePad, vertPad, gap, sectionW };
   });
+  const sections = computed(() => props.view.sections ?? []);
 
   return (
     <View
-      class="flex-col"
+      class="flex-row flex-wrap items-start"
       style={{
         width: layout.value.cw,
         paddingT: layout.value.vertPad,
         paddingB: layout.value.vertPad,
-        gap: layout.value.sectionGap,
+        paddingL: layout.value.edgePad,
+        paddingR: layout.value.edgePad,
+        gap: layout.value.gap,
       }}
     >
-      {layout.value.sectionRows.map((row, ri) => (
+      {sections.value.map((section, index) => (
         <View
-          key={`srow-${ri}`}
-          class="flex-row"
-          style={{
-            gap: layout.value.columnGap,
-            paddingL: layout.value.edgePad,
-            paddingR: layout.value.edgePad,
-          }}
+          key={`s-${index}`}
+          class="flex-col overflow-hidden"
+          style={{ width: layout.value.sectionW }}
         >
-          {row.map((item) => (
-            <View key={`s-${item.globalIndex}`} class="flex-1 flex-col overflow-hidden">
-              <SectionBlock
-                section={item.section}
-                sectionIndex={item.globalIndex}
-                entities={props.entities}
-                source={props.source}
-                approxWidth={layout.value.approxSectionW}
-                editMode={props.editMode}
-                onConfigChange={props.onSectionConfigChange}
-                onCardReorder={props.onCardReorder}
-              />
-            </View>
-          ))}
-          {row.length < layout.value.sectionCols
-            ? Array.from({ length: layout.value.sectionCols - row.length }, (_, i) => (
-                <View key={`spacer-${i}`} class="flex-1" />
-              ))
-            : null}
+          <SectionBlock
+            section={section}
+            sectionIndex={index}
+            entities={props.entities}
+            source={props.source}
+            approxWidth={layout.value.sectionW}
+            editMode={props.editMode}
+            onConfigChange={props.onSectionConfigChange}
+            onCardReorder={props.onCardReorder}
+          />
         </View>
       ))}
     </View>
@@ -240,16 +216,19 @@ function SectionBlock(props: SectionBlockProps) {
     return indices;
   });
 
+  // Placements depend on the column count only (a computed: unchanged when a resize keeps it),
+  // so the card list below survives resizes; pixel sizes come from colW in style getters.
   const gridLayout = computed(() => {
-    const cards = gridCards.value;
-    const cols = actualCardCols.value;
-    const placements = placeCardsInGrid(cards, cols);
+    const placements = placeCardsInGrid(gridCards.value, actualCardCols.value);
     const maxRowEnd =
       placements.length > 0 ? Math.max(...placements.map((p) => p.row + p.rowSpan)) : 0;
     const totalH =
       maxRowEnd > 0 ? maxRowEnd * CARD_ROW_H + Math.max(0, maxRowEnd - 1) * CARD_GAP : 0;
-    const colW = Math.floor((props.approxWidth - (cols - 1) * CARD_GAP) / cols);
-    return { placements, totalH, colW };
+    return { placements, totalH };
+  });
+  const colW = computed(() => {
+    const cols = actualCardCols.value;
+    return Math.floor((props.approxWidth - (cols - 1) * CARD_GAP) / cols);
   });
 
   function toggleSettings() {
@@ -332,16 +311,19 @@ function SectionBlock(props: SectionBlockProps) {
       {gridLayout.value.totalH > 0 ? (
         <View style={{ height: gridLayout.value.totalH }}>
           {gridLayout.value.placements.map((p, i) => {
-            const x = p.col * (gridLayout.value.colW + CARD_GAP);
             const y = p.row * (CARD_ROW_H + CARD_GAP);
-            const w = p.colSpan * gridLayout.value.colW + (p.colSpan - 1) * CARD_GAP;
             const h = p.rowSpan * CARD_ROW_H + (p.rowSpan - 1) * CARD_GAP;
 
             return (
               <View
                 key={`g-${i}`}
                 class="absolute overflow-hidden"
-                style={{ insetL: x, insetT: y, width: w, height: h }}
+                style={{
+                  insetL: p.col * (colW.value + CARD_GAP),
+                  insetT: y,
+                  width: p.colSpan * colW.value + (p.colSpan - 1) * CARD_GAP,
+                  height: h,
+                }}
               >
                 {props.editMode ? (
                   <View class="flex-col flex-1">

@@ -10,6 +10,52 @@
   <string>PocketHome</string>
   <key>CFBundleIdentifier</key>
   <string>dev.pocket-home.dashboard</string>
+  <!-- Icons generated at build (tools/ios-native.ts) from the modern app's 1024 px icon.
+       CFBundleIconFiles is read by iOS 3.2-6; CFBundleIcons by iOS 7+. -->
+  <key>CFBundleIconFiles</key>
+  <array>
+    <string>Icon.png</string>
+    <string>Icon@2x.png</string>
+    <string>Icon-72.png</string>
+    <string>Icon-72@2x.png</string>
+    <string>Icon-76.png</string>
+    <string>Icon-76@2x.png</string>
+    <string>Icon-60@2x.png</string>
+    <string>Icon-60@3x.png</string>
+  </array>
+  <key>CFBundleIcons</key>
+  <dict>
+    <key>CFBundlePrimaryIcon</key>
+    <dict>
+      <key>CFBundleIconFiles</key>
+      <array>
+        <string>Icon.png</string>
+        <string>Icon@2x.png</string>
+        <string>Icon-72.png</string>
+        <string>Icon-72@2x.png</string>
+        <string>Icon-76.png</string>
+        <string>Icon-76@2x.png</string>
+        <string>Icon-60@2x.png</string>
+        <string>Icon-60@3x.png</string>
+      </array>
+      <key>UIPrerenderedIcon</key>
+      <true/>
+    </dict>
+  </dict>
+  <key>UIPrerenderedIcon</key>
+  <true/>
+  <!-- `uiopen dev.pocket-home.dashboard://` (tools/ios-native.ts launch). -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>dev.pocket-home.dashboard</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>dev.pocket-home.dashboard</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

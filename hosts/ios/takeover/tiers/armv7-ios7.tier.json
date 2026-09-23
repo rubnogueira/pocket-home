@@ -8,5 +8,6 @@
   "rustTargetSpec": "hosts/ios/takeover/tiers/rust/armv7-apple-ios7.json",
   "requiresRustNightly": true,
   "defaultRasterDensity": 2,
+  "rasterDensities": [1, 2],
   "description": "32-bit ARMv7, iOS 7.x jailbreak. One guest build (viewport from pocket.json) per CPU/OS tier."
 }

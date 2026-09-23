@@ -18,6 +18,9 @@ export default function CalendarCard(_props: CalendarCardProps) {
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: (number | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
   return (
     <View class="flex-col flex-1 p-3 gap-2">
@@ -29,23 +32,26 @@ export default function CalendarCard(_props: CalendarCardProps) {
           </View>
         ))}
       </View>
-      <View class="flex-row flex-wrap">
-        {cells.map((d, i) => (
-          <View
-            key={`dc-${i}`}
-            class="items-center justify-center"
-            style={{ width: "14.28%", height: 20 }}
-          >
-            {d != null ? (
-              <Text
-                class={d === day ? "text-xs text-blue-400 font-bold" : "text-xs text-slate-300"}
-              >
-                {String(d)}
-              </Text>
-            ) : null}
-          </View>
-        ))}
-      </View>
+      {/* One row per week of 7 flex-1 cells (the core has no percentage widths). */}
+      {weeks.map((week, w) => (
+        <View key={`dw-${w}`} class="flex-row">
+          {week.map((d, i) => (
+            <View
+              key={`dc-${w}-${i}`}
+              class="flex-1 items-center justify-center"
+              style={{ height: 20 }}
+            >
+              {d != null ? (
+                <Text
+                  class={d === day ? "text-xs text-blue-400 font-bold" : "text-xs text-slate-300"}
+                >
+                  {String(d)}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ))}
     </View>
   );
 }

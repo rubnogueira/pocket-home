@@ -1,12 +1,16 @@
 {
   "id": "ipodtouch-ios12",
-  "label": "iPod touch 6/7 — iOS 12.x (ARM64)",
+  "label": "iPod touch 6/7 \u2014 iOS 12.x (ARM64)",
   "iosMin": "12.0",
   "iosMax": "12.5.8",
-  "logicalViewport": [320, 568],
+  "logicalViewport": [
+    320,
+    568
+  ],
   "rasterDensity": 2,
   "profile": "ipodtouch",
   "frameworkNativeTool": "ipodtouch",
   "overrideViewportForBuild": true,
-  "unsupportedReason": null
+  "unsupportedReason": null,
+  "nativeTier": "arm64-ios12"
 }

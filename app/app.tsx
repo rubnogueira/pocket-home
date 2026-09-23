@@ -1,12 +1,14 @@
 import { computed, onMounted, onScopeDispose, ref } from "vue";
 import { Text, View, Image, Focusable, type NodeMirror } from "@pocketjs/framework/components";
 import { after } from "@pocketjs/framework/clock";
-import { createScroller, bindDpadScroll } from "@pocketjs/framework/kinetics";
+import { bindDpadScroll } from "@pocketjs/framework/kinetics";
+import { createScroller, dpadScrollOptions, paintOffset } from "./ui/scroller.ts";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import Sidebar from "./widgets/Sidebar.tsx";
 import { computeGrid, getViewport } from "./theme/sizes.ts";
-import { shellContentInsetBottom, shellContentInsetTop } from "./theme/shell-insets.ts";
+import { pollShellRestore, publishShellState, type ShellState } from "./store/shell-bridge.ts";
+import { useContentInsetBottom } from "./theme/content-insets.ts";
 import { CONFIG } from "./data/config.ts";
 import { ICONS } from "./icons.ts";
 import { Separator, Sheet, Toaster } from "./ui/index.ts";
@@ -93,6 +95,8 @@ export default function App() {
     await dashStore.init(dataSource!);
     connected.value = true;
     (globalThis as any).__dataSource = dataSource;
+    // Hosts keep the app hidden (only its background colour) until the dashboard can draw.
+    (globalThis as { __pocketAppReady?: boolean }).__pocketAppReady = true;
   }
   onMounted(() => {
     initDataSource();
@@ -124,14 +128,13 @@ export default function App() {
     if (cancelClock) cancelClock();
   });
 
-  // Full viewport width — edge padding is handled inside SectionsView.
-  const insetTop = computed(() => shellContentInsetTop());
-  const insetBottom = computed(() => shellContentInsetBottom());
-  const headerBlockH = computed(() => HEADER_H + insetTop.value);
+  // Full viewport width — edge padding is handled inside SectionsView. Native shells size the
+  // surface to the safe area, so the viewport never includes the status bar or home indicator.
   const contentW = computed(() => vp.value.w);
-  const viewportH = computed(() =>
-    Math.max(1, vp.value.h - headerBlockH.value - insetBottom.value),
-  );
+  const viewportH = computed(() => Math.max(1, vp.value.h - HEADER_H));
+  // The content area runs under the browser's bottom toolbar; extend the scroll range so the
+  // last card can still be scrolled above it.
+  const insetBottom = useContentInsetBottom();
   const grid = computed(() => computeGrid(contentW.value, viewportH.value));
 
   const currentViewLabel = computed(() => {
@@ -265,7 +268,8 @@ export default function App() {
   let viewportNode: NodeMirror | undefined;
 
   const scroller = createScroller({
-    max: () => Math.max(0, totalContentH.value - viewportH.value),
+    max: () => Math.max(0, totalContentH.value + insetBottom.value - viewportH.value),
+    extent: () => viewportH.value,
   });
 
   createGesture({
@@ -288,23 +292,61 @@ export default function App() {
     },
   });
 
-  bindDpadScroll(scroller, {
-    active: () => !sidebarOpen.value,
-  });
+  bindDpadScroll(
+    scroller,
+    dpadScrollOptions(() => !sidebarOpen.value),
+  );
+
+  // iOS remounts the guest for each device size; carry the view + scroll across (shell-bridge).
+  let pendingRestore: ShellState | null = null;
+
+  function scrollMax(): number {
+    return Math.max(0, totalContentH.value - viewportH.value);
+  }
+
+  function applyRestore(state: ShellState): void {
+    const views = dashStore.config?.views ?? [];
+    let index = state.viewPath ? views.findIndex((v) => v.path === state.viewPath) : -1;
+    if (index < 0 && typeof state.viewIndex === "number") index = state.viewIndex;
+    if (index >= 0 && index < views.length && index !== dashStore.viewIndex) {
+      dashStore.setView(index);
+    }
+    const fraction = state.scrollFraction ?? 0;
+    scroller.scrollTo(Math.round(Math.min(1, Math.max(0, fraction)) * scrollMax()), {
+      immediate: true,
+    });
+  }
+
+  function syncShellState(): void {
+    const restore = pollShellRestore();
+    if (restore) pendingRestore = restore;
+    if (!connected.value || !dashStore.config) return;
+    if (pendingRestore) {
+      applyRestore(pendingRestore);
+      pendingRestore = null;
+      return;
+    }
+    // Publish at rest only — not on every frame of a fling.
+    if (scroller.state() !== "idle") return;
+    const max = scrollMax();
+    publishShellState({
+      viewPath: dashStore.currentView?.path,
+      viewIndex: dashStore.viewIndex,
+      scrollFraction: max > 0 ? Math.round((scroller.offset() / max) * 1000) / 1000 : 0,
+    });
+  }
 
   onFrame(() => {
     const v = getViewport();
     if (v.w !== vp.value.w || v.h !== vp.value.h) {
+      // Rotation / resize: keep the reader's place (same fraction of the scroll range).
+      const max = scrollMax();
+      const fraction = max > 0 ? scroller.offset() / max : 0;
       vp.value = { w: v.w, h: v.h };
-      scroller.scrollTo(0, { immediate: true });
+      scroller.scrollTo(Math.round(fraction * scrollMax()), { immediate: true });
     }
-    // Shell may update safe-area insets after rotation without remounting.
-    if (
-      insetTop.value !== shellContentInsetTop() ||
-      insetBottom.value !== shellContentInsetBottom()
-    ) {
-      scroller.scrollTo(0, { immediate: true });
-    }
+
+    syncShellState();
 
     const wheelDy: number = (globalThis as any).__wheelDeltaY?.() ?? 0;
     if (wheelDy !== 0 && !sidebarOpen.value) {
@@ -313,9 +355,11 @@ export default function App() {
     }
 
     scroller.step();
+    // Dev diagnostics (hosts/web/perf.js ?perf=1 traces the scroll per displayed frame).
+    (globalThis as { __pocketScrollY?: number }).__pocketScrollY = scroller.offset();
   });
 
-  const scrollY = computed(() => scroller.offset());
+  const scrollY = computed(() => paintOffset(scroller));
 
   // Navigation
   function onSelectCategory(id: string): void {
@@ -373,10 +417,13 @@ export default function App() {
 
   return (
     <View debugName="DashboardRoot" class="w-full h-full bg-slate-900 relative">
-      {/* Main content column — edge-to-edge, no outer margins */}
-      <View class="w-full h-full flex-col">
-        {/* Header bar — draws under transparent status bar; insetTop keeps controls below it */}
-        <View class="flex-col w-full bg-slate-900" style={{ paddingTop: insetTop.value }}>
+      {/* Main content column — edge-to-edge, no outer margins. Sized from the live viewport, not
+          w-full/h-full: the core does not re-lay-out percentage sizes when the viewport shrinks
+          (the web host boots at a large size first, and on window resizes), which left the
+          header's justify-between right group (weather, clock, edit) off-screen. */}
+      <View class="flex-col" style={{ width: vp.value.w, height: vp.value.h }}>
+        {/* Header bar */}
+        <View class="flex-col w-full bg-slate-900">
           <View class="flex-row items-center justify-between px-4" style={{ height: HEADER_H }}>
             <View class="flex-row items-center gap-3">
               <Focusable
@@ -459,12 +506,7 @@ export default function App() {
                 onSectionConfigChange={onSectionConfigChange}
                 onCardReorder={onCardReorder}
               />
-            ) : (
-              <View class="flex-1 flex-col items-center justify-center p-6 gap-3">
-                <Text class="text-sm text-slate-400">Connecting to server...</Text>
-                <Text class="text-xs text-slate-600">Start the server: cd server && bun dev</Text>
-              </View>
-            )}
+            ) : null}
           </View>
         </View>
       </View>

@@ -1,0 +1,10 @@
+{
+  "name": "Pocket Home",
+  "short_name": "Pocket Home",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a"
+}

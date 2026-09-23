@@ -1,89 +1,53 @@
-/** Pocket Home shell chrome — matches app surface `#020617`. */
-import { type Frame, type GridLayout, type Page } from "@nativescript/core";
-import type { PocketView } from "@nativescript/pocketjs";
-import { syncEmbeddedRootLayout } from "./ios-embedded-layout";
-import { bindUiKitOrientationWatch } from "./ios-orientation-watch";
-import { onOrientationEvent } from "./ios-orientation-settle";
+/** Pocket Home shell chrome — matches the app surface (Tailwind slate-900, `#0f172a`). */
+import type { AbsoluteLayout, Frame, Page, View } from "@nativescript/core";
 
-export const POCKET_HOME_CHROME = "#020617";
+export const POCKET_HOME_CHROME = "#0f172a";
 
-const CHROME_RGB = { r: 2 / 255, g: 6 / 255, b: 23 / 255, a: 1 };
-
-export function styleShellPage(page: Page): void {
-  page.actionBarHidden = true;
-  page.backgroundColor = POCKET_HOME_CHROME;
-  page.iosIgnoreSafeArea = true;
-  page.statusBarStyle = "light";
-}
+declare const PocketEmbedPresenter:
+  | { applyWindowChrome(): void; releaseSurface(view: UIView): void }
+  | undefined;
 
 export function styleShellFrame(frame: Frame): void {
   frame.backgroundColor = POCKET_HOME_CHROME;
   frame.iosIgnoreSafeArea = true;
 }
 
-export function styleShellRoot(root: GridLayout): void {
-  root.horizontalAlignment = "stretch";
-  root.verticalAlignment = "stretch";
-  root.backgroundColor = POCKET_HOME_CHROME;
-  root.iosOverflowSafeArea = true;
+export function styleShellPage(page: Page): void {
+  page.actionBarHidden = true;
+  page.backgroundColor = POCKET_HOME_CHROME;
+  // Lay out full-bleed; the shell places the surface inside the window's safe area itself
+  // (ios-pocket-host.ts) so it never sits under the status bar or home indicator.
+  page.iosIgnoreSafeArea = true;
+  page.statusBarStyle = "light";
 }
 
-export function stylePocketSurface(pocket: PocketView): void {
-  pocket.backgroundColor = POCKET_HOME_CHROME;
-  pocket.iosOverflowSafeArea = true;
+export function styleShellRoot(layout: AbsoluteLayout): void {
+  layout.horizontalAlignment = "stretch";
+  layout.verticalAlignment = "stretch";
+  layout.backgroundColor = POCKET_HOME_CHROME;
+  layout.iosIgnoreSafeArea = true;
 }
 
-export function applyPocketNativeChrome(pocket: PocketView): void {
-  paintPocketNative(pocket);
+export function stylePocketSurface(surface: View): void {
+  surface.horizontalAlignment = "stretch";
+  surface.verticalAlignment = "stretch";
+  surface.backgroundColor = POCKET_HOME_CHROME;
+  surface.iosIgnoreSafeArea = true;
 }
 
-function paintPocketNative(pocket: PocketView): void {
-  const native = pocket.nativeViewProtected as {
-    backgroundColor?: unknown;
-    opaque?: boolean;
-    autoresizingMask?: number;
-    layer?: { contentsGravity?: string };
-  } | null;
-  if (!native) {
-    return;
-  }
-  native.backgroundColor = UIColor.colorWithRedGreenBlueAlpha(
-    CHROME_RGB.r,
-    CHROME_RGB.g,
-    CHROME_RGB.b,
-    CHROME_RGB.a,
-  );
-  native.opaque = true;
-  native.autoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
-  if (native.layer) {
-    native.layer.contentsGravity = "resize";
+/** Window background shows through the safe-area bands and behind a surface being swapped. */
+export function applyWindowChrome(): void {
+  if (typeof PocketEmbedPresenter !== "undefined" && PocketEmbedPresenter) {
+    PocketEmbedPresenter.applyWindowChrome();
   }
 }
 
-export function bindOrientationRelayout(
-  page: Page,
-  host: { scheduleLayoutRefresh: () => void },
-  frame?: { requestLayout: () => void },
-): void {
-  let settleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const onOrientationChange = () => {
-    onOrientationEvent();
-    syncEmbeddedRootLayout();
-    frame?.requestLayout();
-    page.requestLayout();
-    if (settleTimer) {
-      clearTimeout(settleTimer);
-    }
-    settleTimer = setTimeout(() => {
-      settleTimer = null;
-      syncEmbeddedRootLayout();
-      frame?.requestLayout();
-      page.requestLayout();
-      host.scheduleLayoutRefresh();
-    }, 380);
-    host.scheduleLayoutRefresh();
-  };
-
-  bindUiKitOrientationWatch(onOrientationChange);
+/**
+ * Frees a replaced surface's guest realm, core and GPU state right away (~50 MB on iPad) instead of
+ * whenever — if ever — the bridge-crossing retain cycle through its callbacks is collected.
+ */
+export function releaseSurfaceResources(native: UIView | null | undefined): void {
+  if (native && typeof PocketEmbedPresenter !== "undefined" && PocketEmbedPresenter) {
+    PocketEmbedPresenter.releaseSurface(native);
+  }
 }

@@ -8,5 +8,6 @@
   "rustTargetSpec": "hosts/ios/takeover/tiers/rust/armv7-apple-ios8.json",
   "requiresRustNightly": true,
   "defaultRasterDensity": 2,
+  "rasterDensities": [1, 2],
   "description": "32-bit ARMv7, iOS 8.x jailbreak. Same pocket.json canvas as other ios-native tiers."
 }

@@ -34,6 +34,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@pocketjs/framework@0.12.0": "patches/@pocketjs%2Fframework@0.12.0.patch",
+  },
   "overrides": {
     "acorn-stage3": {
       "acorn-class-fields": "^1.0.0",

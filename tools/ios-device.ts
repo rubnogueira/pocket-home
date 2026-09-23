@@ -5,6 +5,7 @@
 import { probeUsbDevice } from "./ios/device-probe.ts";
 import { resolveDeployTarget } from "./ios/resolve-deploy-target.ts";
 import { resolveIosNativeTier } from "./ios-native/tiers.ts";
+import { resolveLegacyStack } from "./ios-legacy/stacks.ts";
 import { PROJECT_ROOT } from "./paths.ts";
 import { join } from "node:path";
 
@@ -50,6 +51,16 @@ async function ship(args: readonly string[]): Promise<void> {
     console.log(
       `\nLegacy stack ${target.id}: guest built with device canvas ${target.legacyLogical.join("×")}.`,
     );
+    const stack = resolveLegacyStack(target.id);
+    if (stack.nativeTier) {
+      // The stack deploys through an ios-native tier (same takeover host, stack canvas).
+      const tierArg = `--tier=${stack.nativeTier}`;
+      const tool = join(PROJECT_ROOT, "tools/ios-native.ts");
+      // Always rebuild: a receipt from a pocket.json-canvas build of the same tier would deploy.
+      mustRun(process.execPath, [tool, tierArg, "deploy", "--build"]);
+      mustRun(process.execPath, [tool, tierArg, "launch"]);
+      return;
+    }
     console.log("Native .app install uses the PocketJS framework host:");
     mustRun(process.execPath, [join(PROJECT_ROOT, "tools/ios-legacy.ts"), "native", target.id]);
     return;

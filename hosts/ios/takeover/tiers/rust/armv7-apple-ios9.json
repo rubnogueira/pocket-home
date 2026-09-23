@@ -18,12 +18,13 @@
   "linker-is-gnu": false,
   "lld-flavor": "darwin",
   "llvm-floatabi": "hard",
-  "llvm-target": "armv7-apple-ios9.0.0",
+  "llvm-target": "armv7-apple-ios",
   "max-atomic-width": 64,
   "os": "ios",
   "panic-strategy": "abort",
   "relocation-model": "pic",
   "target-endian": "little",
+  "target-family": ["unix"],
   "target-pointer-width": 32,
   "vendor": "apple"
 }

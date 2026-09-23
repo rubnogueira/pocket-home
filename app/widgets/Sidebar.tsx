@@ -1,5 +1,7 @@
 import { Text, View, Image, Focusable, type NodeMirror } from "@pocketjs/framework/components";
-import { createScroller, bindDpadScroll } from "@pocketjs/framework/kinetics";
+import { bindDpadScroll } from "@pocketjs/framework/kinetics";
+import { createScroller, dpadScrollOptions, paintOffset } from "../ui/scroller.ts";
+import { useContentInsetBottom } from "../theme/content-insets.ts";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import { ref, computed } from "vue";
@@ -37,12 +39,17 @@ export default function Sidebar(props: SidebarProps) {
 
   const count = DEFAULT_CATEGORIES.length;
   const listContentH = count * ROW_H + (count - 1) * ROW_GAP + LIST_PAD * 2;
-  const listViewH = computed(() => Math.max(0, vp.value.h - HEADER_H - FOOTER_H - 2));
+  // The drawer runs to the bottom edge; its profile footer sits above the browser toolbar.
+  const insetBottom = useContentInsetBottom();
+  const listViewH = computed(() =>
+    Math.max(0, vp.value.h - HEADER_H - FOOTER_H - 2 - insetBottom.value),
+  );
 
   // Kinetic scroll for the category list (overflows on short screens).
   let listNode: NodeMirror | undefined;
   const scroller = createScroller({
     max: () => Math.max(0, listContentH - listViewH.value),
+    extent: () => listViewH.value,
   });
 
   createGesture({
@@ -59,7 +66,10 @@ export default function Sidebar(props: SidebarProps) {
     },
   });
 
-  bindDpadScroll(scroller, { active: () => props.open });
+  bindDpadScroll(
+    scroller,
+    dpadScrollOptions(() => props.open),
+  );
 
   onFrame(() => {
     const v = getViewport();
@@ -67,7 +77,7 @@ export default function Sidebar(props: SidebarProps) {
     scroller.step();
   });
 
-  const scrollY = computed(() => scroller.offset());
+  const scrollY = computed(() => paintOffset(scroller));
 
   return (
     <View
@@ -77,6 +87,7 @@ export default function Sidebar(props: SidebarProps) {
         insetT: 0,
         width: sidebarW.value,
         height: vp.value.h,
+        paddingB: insetBottom.value,
       }}
     >
       {/* Header — title left, close button right */}

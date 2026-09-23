@@ -37,7 +37,7 @@ export default function SensorCard(props: SensorCardProps) {
       <Text class="text-sm text-slate-100 font-bold" style={{ maxLines: 1 }}>
         {name.value}
       </Text>
-      <View class="flex-row items-baseline gap-1">
+      <View class="flex-row items-end gap-1">
         <Text class="text-2xl text-slate-50 font-bold">{value.value}</Text>
         {unit.value ? <Text class="text-sm text-slate-400">{unit.value}</Text> : null}
       </View>

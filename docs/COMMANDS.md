@@ -20,7 +20,7 @@
 | `bunx oxfmt --write .`                         | Format                                                                |
 | `bunx oxlint app tools tests pocket.config.ts` | Lint                                                                  |
 | `bun tools/generate-ha-icons.ts`               | MDI PNGs + `app/icons/generated/registry.ts` (also runs from `build`) |
-| `bun tools/wasm.ts`                            | Rebuild `pocketjs.wasm`                                               |
+| `bun tools/wasm.ts`                            | Rebuild `hosts/web/pocketjs.wasm` (`engine/web`: core + GPU exports)  |
 | `bun tools/serve.ts`                           | Static server after a build                                           |
 
 ## iOS harness (`bun run ios -- …`)
@@ -49,7 +49,8 @@ bun tools/ios-app.ts build
 bun tools/ios-app.ts run
 bun tools/ios-app.ts run --simulator=<udid>
 bun tools/ios-app.ts run --physical --udid=<udid>
-# flags: --hz=60|120|240 --density=1..4 --no-build
+# default: guests for density 2+3 x 60+120 Hz, picked per device at launch
+# flags: --hz=60|120 --density=1..4 (pin one) --no-build
 ```
 
 ## Jailbreak device tiers

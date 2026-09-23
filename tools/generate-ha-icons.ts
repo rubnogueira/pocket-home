@@ -139,7 +139,10 @@ export async function generateHaIcons(opts: GenerateHaIconsOptions): Promise<voi
   let missing = 0;
 
   const logicalCell = 32;
-  const pixelSize = logicalCell * rasterDensity;
+  // Pak images must be a power of two (<= 512): round the density-scaled cell up
+  // (3x -> 128 px). Icons are drawn at an explicit style size, so extra texels only
+  // mean a sharper downsample, never a different layout.
+  const pixelSize = Math.min(512, 2 ** Math.ceil(Math.log2(logicalCell * rasterDensity)));
 
   for (const name of names) {
     const pathData = lookupPathData(name);

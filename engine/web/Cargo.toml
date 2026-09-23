@@ -1,0 +1,27 @@
+# pocket-home-wasm — the framework's browser wasm core (engine/wasm in @pocketjs/framework,
+# compiled in verbatim by build.rs) plus read-only GPU exports so hosts/web/gpu.js can draw
+# the core DrawList with WebGL2 instead of the per-pixel software rasterizer.
+#
+# Built by tools/wasm.ts -> hosts/web/pocketjs.wasm (served in place of the framework's).
+[package]
+name = "pocket-home-wasm"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+pocketjs-core = { path = "../../node_modules/@pocketjs/framework/engine/core" }
+
+# Speed over size: the upstream crate ships opt-level "s", which cost ~20% of raster time.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Standalone crate (like every framework engine crate).
+[workspace]

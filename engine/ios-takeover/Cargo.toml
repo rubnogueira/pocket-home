@@ -1,0 +1,33 @@
+# pocket-home-ios — Pocket Home's iOS takeover engine: @pocketjs/framework's pocket-apple C ABI
+# (one pocket-mod guest realm, the pocket-ui-surface `ui` mount, pocketjs-core rendering) plus
+# the takeover host's additions (live viewport). See src/lib.rs.
+#
+# Built by tools/ios-native.ts for each hosts/ios/takeover tier.
+[package]
+name = "pocket-home-ios"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+pocket-mod = { path = "../../node_modules/@pocketjs/framework/engine/crates/pocket-mod" }
+pocket-ui-surface = { path = "../../node_modules/@pocketjs/framework/engine/crates/pocket-ui-surface" }
+pocketjs-core = { path = "../../node_modules/@pocketjs/framework/engine/core", features = ["std"] }
+log = "0.4"
+
+# rquickjs has no pre-generated FFI bindings for iOS targets: generate them (bindgen).
+[target.'cfg(target_os = "ios")'.dependencies]
+rquickjs = { version = "0.12", features = ["bindgen"] }
+
+# Speed over size, like engine/web: the device rasterizes on the CPU.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Standalone crate (like every framework engine crate).
+[workspace]

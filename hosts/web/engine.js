@@ -18,9 +18,11 @@
 //   A = SQUARE         S = TRIANGLE        Shift = SELECT   Space = START
 
 import { createWasmUi, FB_W as DEFAULT_FB_W, FB_H as DEFAULT_FB_H } from "./wasm-ops.js";
-import { drawHud, wasmMemoryBytes } from "./hud.js";
+import { wasmMemoryBytes } from "./hud.js";
 import { createAudioHost } from "./audio.js";
 import { createNetHost } from "./net.js";
+import { createGpuRenderer } from "./gpu.js";
+import { createAutoDrag, createPerf } from "./perf.js";
 
 const query = new URLSearchParams(location.search);
 function positiveIntParam(name, fallback, max = 32000) {
@@ -28,19 +30,27 @@ function positiveIntParam(name, fallback, max = 32000) {
   return Number.isInteger(value) && value > 0 && value <= max ? value : fallback;
 }
 
-// Render scale = device-pixel ratio, but the AUTO default is capped at 2.
-// The logical viewport is a CSS-pixel size (what the app lays out for); the
-// framebuffer is rendered at logical × scale so retina panels stay crisp.
-// This host rasterizes in software and blits the whole framebuffer every
-// frame, so per-frame cost grows as scale² — on a DPR-3 phone, scale 3 is
-// 2.25× the pixel work of scale 2 while scrolling, for no gain past retina
-// (and it also exceeds the density-2 font atlas that `bun run dev` bakes, so
-// text is BOTH slower and softer). Scale 2 is the crispness ceiling most eyes
-// resolve; the Settings dropdown and ?scale=N still allow up to 4× for a
-// static high-DPI screenshot. ui_render_scaled() accepts 1..4.
-const MAX_AUTO_RENDER_SCALE = 2;
+// Density and scale are automatic (no ?scale / ?density needed):
+//
+//   * Raster density — the resolution glyph atlases and rounded-corner masks are baked at — is
+//     ceil(devicePixelRatio), 1..MAX_DENSITY; tools/build.ts bakes one pak per density
+//     (dist/density/<d>/). Text is then never upsampled: on a 1x panel it is not a downsampled
+//     2x atlas (soft), on a 3x panel not an upscaled 2x one (blurry).
+//   * GPU path (gpu.js, WebGL2): the canvas backing store is the element's exact device-pixel
+//     size and the DrawList is drawn at logical × devicePixelRatio (fractional ratios too), so
+//     the browser never resamples the frame. Full resolution at every refresh rate.
+//   * CPU fallback (no WebGL2): integer render scale = density, as before.
+//
+// The density follows the screen: moving the window to a panel with another ratio reloads the
+// app at that density (state carried over, see svc bridge below). ?density=N / ?scale=N still
+// pin a value for debugging; ?gpu=0 forces the software rasterizer.
+export const MAX_DENSITY = 3;
+export function autoDensity(dpr = window.devicePixelRatio || 1) {
+  return Math.max(1, Math.min(MAX_DENSITY, Math.ceil(dpr - 0.05)));
+}
+const densityPinned = query.has("density") || query.has("scale");
 function defaultRenderScale() {
-  return Math.max(1, Math.min(MAX_AUTO_RENDER_SCALE, Math.round(window.devicePixelRatio || 1)));
+  return autoDensity();
 }
 
 // LOGICAL_* and FB_* are mutable: setViewport() re-sizes the live viewport
@@ -51,7 +61,7 @@ let LOGICAL_H = positiveIntParam("height", DEFAULT_FB_H);
 // RENDER_SCALE is mutable: setRenderScale() toggles the retina framebuffer
 // on/off live (the HiDPI checkbox). RASTER_DENSITY tracks it for AA sampling.
 let RENDER_SCALE = positiveIntParam("scale", defaultRenderScale(), 4);
-let RASTER_DENSITY = positiveIntParam("density", RENDER_SCALE, 255);
+let RASTER_DENSITY = positiveIntParam("density", RENDER_SCALE, MAX_DENSITY);
 let FB_W = LOGICAL_W * RENDER_SCALE;
 let FB_H = LOGICAL_H * RENDER_SCALE;
 let needsFullRender = false; // set after a live resize so the next blit repaints whole
@@ -98,6 +108,14 @@ let lastRenderMs = 0;
 const RENDER_COST_EMA = 0.4; // weight of the newest cost sample
 const BUDGET_DROP = 1.3; // drop scale when cost exceeds budget × this
 const BUDGET_RAISE = 0.9; // raise only if the PREDICTED higher cost fits
+// Refresh period for the clock (vsyncSteps): the mean of recent rAF intervals near their median,
+// so outliers (a dropped frame, a tab switch) do not pull it and a new display is picked up
+// within a few frames.
+let refreshMs = 1000 / 60;
+const REFRESH_SAMPLES = 31;
+const refreshRing = new Float64Array(REFRESH_SAMPLES);
+let refreshCount = 0;
+const refreshSorted = new Float64Array(REFRESH_SAMPLES);
 let hudDirty = true; // repaint the on-canvas HUD on the next blit
 let idleSkips = 0; // consecutive blits skipped (idle safety net)
 const IDLE_SKIP_CAP = 240; // force a repaint at least this often when idle
@@ -183,7 +201,14 @@ function packedAnalog() {
 
 let wasm = null; // createWasmUi result
 let canvas = null;
-let ctx = null;
+let ctx = null; // 2D context (CPU fallback only)
+let gpu = null; // gpu.js renderer (WebGL2); null = CPU fallback
+let presentWaiters = []; // whenPresented() callers
+let hudEl = null; // FPS / memory pills (DOM text: rendered natively, sharp at any pixel ratio)
+let hudFpsEl = null;
+let hudMemEl = null;
+let displayCss = null; // { w, h } CSS size the page shows the canvas at (setDisplaySize)
+const displayListeners = new Set();
 let held = 0;
 let rafId = 0;
 let acc = 0;
@@ -201,7 +226,8 @@ const WHEEL_LINE_PX = 40;
 
 // ---- touch state ----------------------------------------------------------------
 // Track active pointer/touch contacts on the canvas and deliver them to
-// frame() as packed wide-format integers (bit31=1, x:10, y:10, id:8).
+// frame() as packed wide-format integers (bit31=1, x:10, y:10, id:8, plus the 11th x / y bit
+// in bits 28 / 29 — patched framework/src/touch.ts), so windows up to 2047 logical px wide.
 //
 // Latching: a contact that appears and disappears between frames is held for
 // one frame so the gesture layer sees a down edge.  A "pending release"
@@ -210,24 +236,29 @@ const activeContacts = new Map(); // pointerId -> {x, y, release}
 const WIDE_MARKER = 0x80000000;
 const WIDE_COORD_BITS = 10;
 const WIDE_COORD_MASK = (1 << WIDE_COORD_BITS) - 1;
+const WIDE_COORD_MAX = 2047;
 
+/**
+ * Logical point of a pointer event: `x`/`y` whole px for the touch wire, `fx`/`fy` exact —
+ * CSS px are fractional on a 3x screen, and rounding them moved drags in 3-device-px steps
+ * (see __pocketTouchPrecise below).
+ */
+// The canvas rect, read at most once per frame: getBoundingClientRect() on every pointermove can
+// force a synchronous style/layout pass (the HUD's DOM text changes every second).
+let canvasRect = null;
 function canvasLogicalPoint(event) {
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: Math.max(
-      0,
-      Math.min(LOGICAL_W - 1, Math.round(((event.clientX - rect.left) * LOGICAL_W) / rect.width)),
-    ),
-    y: Math.max(
-      0,
-      Math.min(LOGICAL_H - 1, Math.round(((event.clientY - rect.top) * LOGICAL_H) / rect.height)),
-    ),
-  };
+  const rect = (canvasRect ||= canvas.getBoundingClientRect());
+  const clamp = (v, size) => Math.max(0, Math.min(size - 1, WIDE_COORD_MAX, v));
+  const fx = clamp(((event.clientX - rect.left) * LOGICAL_W) / rect.width, LOGICAL_W);
+  const fy = clamp(((event.clientY - rect.top) * LOGICAL_H) / rect.height, LOGICAL_H);
+  return { x: Math.round(fx), y: Math.round(fy), fx, fy };
 }
 
 function packTouchWide(id, x, y) {
   return (
     (WIDE_MARKER |
+      (((y >> WIDE_COORD_BITS) & 1) << 29) |
+      (((x >> WIDE_COORD_BITS) & 1) << 28) |
       ((id & 0xff) << (WIDE_COORD_BITS * 2)) |
       ((y & WIDE_COORD_MASK) << WIDE_COORD_BITS) |
       (x & WIDE_COORD_MASK)) >>>
@@ -236,17 +267,41 @@ function packTouchWide(id, x, y) {
 }
 
 function buildTouchArrays() {
-  if (activeContacts.size === 0) return { touches: undefined, hits: undefined };
+  if (activeContacts.size === 0) return { touches: undefined, hits: undefined, precise: undefined };
   const touches = [];
   const hits = [];
+  const precise = [];
   for (const [id, pt] of activeContacts) {
     touches.push(packTouchWide(id & 0xff, pt.x, pt.y));
-    const ops = wasm?.ops;
-    const hitFn = ops?.hitTestBounds ?? ops?.hitTest;
-    const hit = hitFn ? hitFn(pt.x, pt.y) : 0;
-    hits.push(hit);
+    pt.seen = true;
+    precise.push(pt.fx ?? pt.x, pt.fy ?? pt.y);
+    // Hit fact: resolved once, on the frame the contact appears, and carried for its lifetime
+    // (docs/TOUCH.md) — not re-queried every virtual frame of a drag.
+    if (pt.hit === undefined) {
+      const ops = wasm?.ops;
+      const hitFn = ops?.hitTestBounds ?? ops?.hitTest;
+      pt.hit = hitFn ? hitFn(pt.x, pt.y) : 0;
+    }
+    hits.push(pt.hit);
   }
-  return { touches, hits };
+  return { touches, hits, precise };
+}
+
+/**
+ * Finger lifted at `pt`. A contact the guest has already seen at that position is dropped at
+ * once, so the up edge (and a fling) lands on the next virtual frame. Latching it for one more
+ * frame, as before, cost every fling a quarter of its first display frame of motion (a visible
+ * dip at release). The latch stays for a contact the guest has not seen yet (down and up between
+ * two frames: a tap) and for a lift that carries new movement.
+ */
+function releaseContact(id, c, pt) {
+  const moved = pt && (pt.fx !== (c.fx ?? c.x) || pt.fy !== (c.fy ?? c.y));
+  if (c.seen && !moved) {
+    activeContacts.delete(id);
+    return;
+  }
+  if (pt) Object.assign(c, pt);
+  c.release = true;
 }
 
 function sweepReleasedContacts() {
@@ -266,6 +321,47 @@ function sweepReleasedContacts() {
 let tickHz = 60;
 let simHz = 60;
 let hzRequested = false;
+
+// Simulation rate = display rate. Web builds bake 240 Hz ticks so every display gets at least
+// one step per frame, but the loop then ran 4 app transactions (input, effects, every onFrame
+// hook, reactivity) per displayed frame at 60 Hz, 3 of them invisible — and their garbage.
+// When the display refreshes at a divisor of the tick rate the app runs ONE transaction per
+// frame, advancing the core by tickHz / simHz ticks (virtual time is unchanged; the app's
+// physics and timers are time-based). Other rates (144, 165 Hz) keep simHz = tickHz and the
+// accumulator. A display change (window moved to another screen, Low Power Mode) reloads at
+// the new rate, keeping view and scroll like a density change.
+const DISPLAY_RATES = [30, 60, 120, 240];
+let preferredSimHz; // display rate for the next load: undefined = not probed yet, null = tickHz
+let rateMismatch = 0; // consecutive frames the display rate disagreed with simHz
+let rateReload = null;
+
+/** The display rate matching a refresh period, if it is one of DISPLAY_RATES (±4 %). */
+function displayRate(periodMs) {
+  if (!(periodMs > 0)) return null;
+  const hz = 1000 / periodMs;
+  return DISPLAY_RATES.find((rate) => Math.abs(hz - rate) / rate < 0.04) ?? null;
+}
+
+let refreshProbe = null;
+/** Median rAF interval over a dozen frames (null when rAF does not run, e.g. a hidden tab). */
+function probeRefresh() {
+  refreshProbe ||= new Promise((resolve) => {
+    const dts = [];
+    let prev = 0;
+    const step = (t) => {
+      if (prev) dts.push(t - prev);
+      prev = t;
+      if (dts.length >= 12) {
+        dts.sort((a, b) => a - b);
+        resolve(dts[dts.length >> 1]);
+      } else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    setTimeout(() => resolve(null), 600);
+  });
+  return refreshProbe;
+}
+probeRefresh();
 let logSink = () => {};
 let fpsSink = () => {};
 let statsFrames = 0;
@@ -290,6 +386,11 @@ function dtSend(line) {
   if (dtWs && dtWs.readyState === 1) dtWs.send(line);
   else if (dtOutbox.length < 200) dtOutbox.push(line);
 }
+
+// Opt-in (?devtools=1): with a transport installed the framework's shim serializes the whole UI
+// tree whenever it changes (every frame while scrolling, ~400 KB/s of garbage) and polls stats,
+// and tools/serve.ts has no DevTools hub, so it only fed a WebSocket retry loop.
+const devtoolsEnabled = query.get("devtools") === "1";
 
 function connectDevtools() {
   let url;
@@ -378,11 +479,20 @@ function safeFrame() {
     if (audioHost) audioHost.beginFrame();
     if (netHost) netHost.beginFrame();
     // JS: one virtual-frame transaction (input, effects, sweep)
-    const { touches, hits } = buildTouchArrays();
+    const t0 = perf ? performance.now() : 0;
+    const { touches, hits, precise } = buildTouchArrays();
+    // Exact coordinates of this frame's contact words (patched framework/src/touch.ts).
+    globalThis.__pocketTouchPrecise = precise;
     frameCb(held, packedAnalog(), touches, hits);
+    globalThis.__pocketTouchPrecise = undefined;
     sweepReleasedContacts();
+    const t1 = perf ? performance.now() : 0;
     const ticks = tickHz / simHz;
     for (let t = 0; t < ticks; t++) wasm.tick();
+    if (perf) {
+      perf.add("frame", t1 - t0);
+      perf.add("tick", performance.now() - t1);
+    }
   } catch (e) {
     logSink("FRAME ERROR: " + (e && e.stack ? e.stack : e));
     frameCb = null; // stop repeating the same throw 60x/s
@@ -391,7 +501,83 @@ function safeFrame() {
 
 // Reallocate the framebuffer/canvas at an integer scale. Cheap enough to call
 // on a motion transition (once per scroll start/stop), not every frame.
+/** GPU backing store: the displayed CSS size in exact device pixels. */
+function gpuBackingSize() {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = displayCss ? displayCss.w : LOGICAL_W;
+  const cssH = displayCss ? displayCss.h : LOGICAL_H;
+  return { w: Math.max(1, Math.round(cssW * dpr)), h: Math.max(1, Math.round(cssH * dpr)) };
+}
+
+function fmtMem(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  return Math.round(bytes / 1024) + " KB";
+}
+
+/**
+ * The FPS / memory HUD is DOM text over the canvas corners. It used to be drawn into the
+ * framebuffer (CPU path) or a second full-screen 2D canvas (GPU path), which Safari resampled
+ * — the labels came out blurry on phones. Text elements are rasterized by the browser at the
+ * screen's native resolution, and cost nothing per frame.
+ */
+function createHud() {
+  const pill = (align, color) => {
+    const el = document.createElement("span");
+    Object.assign(el.style, {
+      position: "absolute",
+      top: "3px",
+      [align]: "3px",
+      padding: "2px 4px",
+      background: "rgba(8, 11, 20, 0.68)",
+      color,
+      font: "700 11px/12px ui-monospace, SFMono-Regular, Menlo, monospace",
+      whiteSpace: "pre",
+    });
+    return el;
+  };
+  hudEl = document.createElement("div");
+  hudEl.id = "hud";
+  hudEl.setAttribute("aria-hidden", "true");
+  Object.assign(hudEl.style, { position: "absolute", pointerEvents: "none", zIndex: "1" });
+  hudFpsEl = pill("left", "#34d399");
+  hudMemEl = pill("right", "#60a5fa");
+  hudEl.append(hudFpsEl, hudMemEl);
+  canvas.parentElement.style.position ||= "relative";
+  canvas.after(hudEl);
+  updateHud();
+}
+
+function positionHud() {
+  if (!hudEl) return;
+  Object.assign(hudEl.style, {
+    left: `${canvas.offsetLeft}px`,
+    top: `${canvas.offsetTop}px`,
+    width: canvas.style.width || `${LOGICAL_W}px`,
+    height: canvas.style.height || `${LOGICAL_H}px`,
+  });
+}
+
+function updateHud() {
+  if (!hudEl) return;
+  hudFpsEl.textContent = "FPS " + (hudFps | 0);
+  hudMemEl.textContent = "MEM " + fmtMem(hudMem);
+  hudFpsEl.hidden = globalThis.__hudShowFps === false;
+  hudMemEl.hidden = globalThis.__hudShowMem === false;
+}
+
 function sizeFramebuffer(scale) {
+  canvasRect = null;
+  if (gpu) {
+    const { w, h } = gpuBackingSize();
+    FB_W = w;
+    FB_H = h;
+    fbScale = w / LOGICAL_W;
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    positionHud();
+    needsFullRender = true;
+    return;
+  }
   fbScale = scale;
   FB_W = LOGICAL_W * scale;
   FB_H = LOGICAL_H * scale;
@@ -399,6 +585,7 @@ function sizeFramebuffer(scale) {
   canvas.height = FB_H;
   ctx.imageSmoothingEnabled = false;
   needsFullRender = true; // resizing the canvas element clears it — repaint whole
+  positionHud();
 }
 
 // Choose the motion raster scale from the last painted frame's measured cost:
@@ -418,8 +605,27 @@ function adaptMotionScale() {
   }
 }
 
+function gpuBlit() {
+  const t0 = performance.now();
+  // Draws only when the DrawList changed (or after a resize); otherwise the last frame stays.
+  const drew = gpu.render(FB_W / LOGICAL_W, needsFullRender);
+  needsFullRender = false;
+  lastBlitDrew = drew;
+  if (perf) {
+    perf.add("blit", performance.now() - t0);
+    for (const [name, ms] of Object.entries(gpu.timings)) perf.add("blit." + name, ms);
+  }
+  if (drew) {
+    const cost = performance.now() - t0;
+    lastRenderMs = lastRenderMs > 0 ? lastRenderMs + RENDER_COST_EMA * (cost - lastRenderMs) : cost;
+  }
+  hudDirty = false;
+}
+
 function blit() {
-  if (!wasm || !ctx) return;
+  if (!wasm) return;
+  if (gpu && !gpu.lost) return gpuBlit();
+  if (!ctx) return;
   // Motion signal: the DrawList hash. drawHash() doesn't rasterize, so this
   // probe is ~free; the change RATE over MOTION_WINDOW frames drives the scale.
   const hash = wasm.drawHash ? wasm.drawHash() : null;
@@ -434,7 +640,6 @@ function blit() {
       0,
       0,
     );
-    drawHud(ctx, FB_W, FB_H, hudFps, hudMem, fbScale);
     hudDirty = false;
     return;
   }
@@ -490,7 +695,6 @@ function blit() {
     0,
     0,
   );
-  drawHud(ctx, FB_W, FB_H, hudFps, hudMem, fbScale);
   hudDirty = false;
   // Measure this paint (EMA) and feed the motion controller. Only meaningful
   // while moving — a settled frame renders at full scale by policy regardless.
@@ -499,12 +703,104 @@ function blit() {
   if (inMotion) adaptMotionScale();
 }
 
+/**
+ * Simulation steps to run for a display frame that took `dt` ms.
+ *
+ * Flooring wall time into fixed steps (the classic accumulator) makes motion uneven at a steady
+ * refresh: rAF timestamps jitter by a fraction of a millisecond, the accumulator's phase sits
+ * near a step boundary, and a 240 Hz clock on a 60 Hz display runs 4, 3, 5, 4 … steps per frame —
+ * a scroll moves 25% too little on one frame and 25% too much on the next while the counter
+ * still reads 60 fps. When the refresh period is a whole number of steps (60/120/240 Hz displays
+ * for a 240 Hz clock) each vsync advances exactly that many; a late frame advances by the vsyncs
+ * it spanned. Other rates (144, 165 Hz) keep the accumulator.
+ */
+function vsyncSteps(dt) {
+  const STEP = 1000 / simHz;
+  const maxSteps = Math.max(4, Math.round(simHz / 15)); // bounds a post-tab-hide burst
+  if (dt > 0) {
+    refreshRing[refreshCount++ % REFRESH_SAMPLES] = dt;
+    const n = Math.min(refreshCount, REFRESH_SAMPLES);
+    refreshSorted.set(refreshRing.subarray(0, n));
+    const median = refreshSorted.subarray(0, n).sort()[n >> 1];
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      if (Math.abs(refreshRing[i] - median) <= median * 0.1) {
+        sum += refreshRing[i];
+        count++;
+      }
+    }
+    refreshMs = sum / count;
+  }
+  const perVsync = refreshMs / STEP;
+  const whole = Math.round(perVsync);
+  if (whole >= 1 && Math.abs(perVsync - whole) < 0.12) {
+    acc = 0;
+    return Math.min(maxSteps, Math.max(1, Math.round(dt / refreshMs)) * whole);
+  }
+  acc += dt;
+  let steps = 0;
+  while (acc >= STEP && steps < maxSteps) {
+    acc -= STEP;
+    steps++;
+  }
+  return steps;
+}
+
+// Dev diagnostics (hosts/web/perf.js): ?perf=1 frame-time reports, ?autodrag=1 scripted finger.
+const perf = createPerf(query.get("perf") === "1", () => ({
+  refreshMs,
+  trace: query.get("trace") === "1",
+  labels: {
+    backend: gpu ? "gpu" : "cpu",
+    dpr: window.devicePixelRatio || 1,
+    viewport: `${LOGICAL_W}x${LOGICAL_H}`,
+    simHz,
+  },
+}));
+const autoDrag = createAutoDrag(query.get("autodrag") === "1", () => ({
+  w: LOGICAL_W,
+  h: LOGICAL_H,
+}));
+const AUTO_DRAG_ID = 250;
+let lastBlitDrew = false;
+
+function applyAutoDrag(now) {
+  const contact = autoDrag(now);
+  const live = activeContacts.get(AUTO_DRAG_ID);
+  if (contact) {
+    const pt = { x: Math.round(contact.x), y: Math.round(contact.y), fx: contact.x, fy: contact.y };
+    if (live && !live.release) Object.assign(live, pt);
+    else activeContacts.set(AUTO_DRAG_ID, { ...pt, release: false });
+  } else if (live && !live.release) {
+    releaseContact(AUTO_DRAG_ID, live, null);
+  }
+}
+
+/** Reload at the display's rate when it has disagreed with simHz for ~1.5 s (see DISPLAY_RATES). */
+function watchDisplayRate() {
+  const rate = displayRate(refreshMs);
+  const want = rate !== null && Number.isInteger(tickHz / rate) ? rate : tickHz;
+  rateMismatch = want === simHz ? 0 : rateMismatch + 1;
+  if (rateMismatch < 90 || rateReload || !currentName) return;
+  logSink(`display: ${Math.round(1000 / refreshMs)} Hz -> simulation ${want} Hz`);
+  preferredSimHz = want === tickHz ? null : want;
+  rateMismatch = 0;
+  const name = currentName;
+  rateReload = load(name).finally(() => (rateReload = null));
+}
+
 function tick(now) {
   rafId = requestAnimationFrame(tick);
+  canvasRect = null;
+  perf?.begin(now);
+  if (autoDrag && frameCb) applyAutoDrag(now);
+  // Screen change backstop: the resolution media query does not fire everywhere (emulated
+  // ratios, some browsers on monitor moves); comparing the ratio each frame costs nothing.
+  if ((window.devicePixelRatio || 1) !== knownDpr) onPixelRatioChange();
   let dt = now - last;
   last = now;
   if (dt > 250) dt = 250; // avoid the catch-up spiral after tab hide
-  acc += dt;
   // Track the panel's IDEAL cadence: snap down to any faster frame (that reveals
   // the true refresh period), creep only slowly toward slower ones so a run of
   // heavy scroll frames can't inflate the budget the scroll is judged against.
@@ -513,33 +809,47 @@ function tick(now) {
     else displayIntervalMs += 0.01 * (dt - displayIntervalMs);
     if (displayIntervalMs > 34) displayIntervalMs = 34;
   }
-  const STEP = 1000 / simHz;
-  // One blit per rAF, so the VISUAL rate follows the display (60/120/240 Hz)
-  // with no hard-coded cap; `steps` sim frames run per rAF to keep virtual time
-  // (STEP ms each). The cap bounds a post-tab-hide burst but must scale with
-  // simHz — at 240 Hz a 60 Hz display legitimately needs 4 steps/rAF — so keep
-  // ~66 ms of catch-up headroom (safeFrame is ~0.001 ms; the blit is the cost).
-  const maxSteps = Math.max(4, Math.round(simHz / 15));
-  let steps = 0;
-  while (acc >= STEP && steps < maxSteps) {
-    safeFrame();
-    acc -= STEP;
-    steps++;
-  }
+  if (!hzRequested && frameCb && refreshCount >= REFRESH_SAMPLES) watchDisplayRate();
+  const steps = vsyncSteps(dt);
+  for (let i = 0; i < steps; i++) safeFrame();
+  lastBlitDrew = false;
   if (steps > 0) {
     blit();
     statsFrames++; // count visual frames (blits), not simulation steps
+    if (presentWaiters.length) {
+      // The compositor shows this frame on the next vsync; resolve after it.
+      const waiters = presentWaiters;
+      presentWaiters = [];
+      requestAnimationFrame(() => waiters.forEach((resolve) => resolve()));
+    }
   }
+  perf?.end(now, steps, lastBlitDrew, activeContacts.get(AUTO_DRAG_ID)?.fy);
   statsT += dt;
   if (statsT >= 1000) {
     // Sample FPS + memory once per second for the on-canvas HUD.
     hudFps = Math.round((statsFrames * 1000) / statsT);
+    // Console / automation diagnostics: live paint rate (follows the display) and the clock.
+    globalThis.__pocketStats = {
+      fps: hudFps,
+      tickHz,
+      simHz,
+      backend: gpu ? "gpu" : "cpu",
+    };
     hudMem = wasmMemoryBytes(wasm);
-    hudDirty = true; // the HUD text changed — force one repaint even if idle
+    updateHud();
     fpsSink(hudFps);
     statsFrames = 0;
     statsT = 0;
   }
+}
+
+/**
+ * Resolves once a frame rendered after this call is on screen. The page keeps the canvas
+ * hidden until then, so a load shows the app background and then the laid-out app, never
+ * an empty (black) WebGL canvas or a placeholder-sized first frame.
+ */
+export function whenPresented() {
+  return new Promise((resolve) => presentWaiters.push(resolve));
 }
 
 function start() {
@@ -580,9 +890,64 @@ export function pressVirtual(bit, down) {
   else held &= ~bit;
 }
 
-/** The render scale (device-pixel ratio) currently applied. */
+/** The render scale currently applied: the exact device-pixel ratio on the GPU path. */
 export function renderScale() {
-  return RENDER_SCALE;
+  return gpu ? FB_W / LOGICAL_W : RENDER_SCALE;
+}
+
+/** Renderer + density in use, for the page's resolution label. */
+export function renderInfo() {
+  return {
+    backend: gpu ? "gpu" : "cpu",
+    density: RASTER_DENSITY,
+    scale: renderScale(),
+    dpr: window.devicePixelRatio || 1,
+  };
+}
+
+/**
+ * The CSS size the page displays the canvas at. On the GPU path the backing store follows it
+ * in exact device pixels, so the frame is never resampled (crisp at fractional ratios and when
+ * a fixed device resolution is fitted into a smaller window).
+ */
+export function setDisplaySize(cssW, cssH) {
+  displayCss = { w: Math.max(1, cssW), h: Math.max(1, cssH) };
+  if (wasm && canvas) sizeFramebuffer(RENDER_SCALE);
+}
+
+/** Called after the screen's pixel ratio changes (window moved to another display). */
+export function onDisplayChange(listener) {
+  displayListeners.add(listener);
+  return () => displayListeners.delete(listener);
+}
+
+// ---- display tracking ----------------------------------------------------------------
+// devicePixelRatio changes when the window moves to another screen (or on browser zoom).
+// A new density reloads the app with that density's atlases; the same density only re-sizes.
+let dprQuery = null;
+let densityReload = null;
+let knownDpr = 0;
+function watchPixelRatio() {
+  knownDpr = window.devicePixelRatio || 1;
+  if (typeof matchMedia !== "function") return;
+  if (dprQuery) dprQuery.removeEventListener("change", onPixelRatioChange);
+  dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  dprQuery.addEventListener("change", onPixelRatioChange);
+}
+function onPixelRatioChange() {
+  if ((window.devicePixelRatio || 1) === knownDpr) return; // both detectors fired
+  watchPixelRatio();
+  for (const listener of displayListeners) listener();
+  const next = autoDensity();
+  if (!densityPinned && currentName && next !== RASTER_DENSITY) {
+    logSink(`display: devicePixelRatio ${window.devicePixelRatio} -> density ${next}x`);
+    RASTER_DENSITY = next;
+    RENDER_SCALE = next;
+    const name = currentName;
+    densityReload = (densityReload ?? Promise.resolve()).then(() => load(name));
+  } else if (wasm && canvas) {
+    sizeFramebuffer(RENDER_SCALE);
+  }
 }
 
 /**
@@ -594,6 +959,7 @@ export function renderScale() {
  */
 export function setRenderScale(scale) {
   scale = Math.max(1, Math.min(4, Math.round(scale)));
+  if (gpu) return RENDER_SCALE; // GPU path always renders at the panel's native resolution
   if (!wasm || !canvas || scale === RENDER_SCALE) return RENDER_SCALE;
   RENDER_SCALE = scale;
   RASTER_DENSITY = scale;
@@ -638,8 +1004,6 @@ export async function mount(theCanvas, opts = {}) {
   canvas = theCanvas;
   canvas.width = FB_W;
   canvas.height = FB_H;
-  ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
   window.addEventListener("keydown", onKey(true));
   window.addEventListener("keyup", onKey(false));
   window.addEventListener("blur", () => {
@@ -664,10 +1028,14 @@ export async function mount(theCanvas, opts = {}) {
     const pt = canvasLogicalPoint(e);
     c.x = pt.x;
     c.y = pt.y;
+    c.fx = pt.fx;
+    c.fy = pt.fy;
   });
   const pointerEnd = (e) => {
     const c = activeContacts.get(e.pointerId);
-    if (c) c.release = true;
+    if (!c) return;
+    if (e.type === "pointerup") releaseContact(e.pointerId, c, canvasLogicalPoint(e));
+    else c.release = true;
   };
   canvas.addEventListener("pointerup", pointerEnd);
   canvas.addEventListener("pointercancel", pointerEnd);
@@ -697,17 +1065,112 @@ export async function mount(theCanvas, opts = {}) {
     simHz = hzParam;
     hzRequested = true;
   }
-  const res = await fetch("pocketjs.wasm");
-  if (!res.ok) throw new Error("pocketjs.wasm not found — run: bun tools/wasm.ts");
   // Init at the max cap (see INIT_MAX); load() lays the app out once at that
   // size to raise the grow ceiling, then presents the current logical size.
-  wasm = await createWasmUi(await res.arrayBuffer(), {
+  wasm = await createWasmUi(await compileWasm(), {
     width: INIT_MAX,
     height: INIT_MAX,
     rasterDensity: RASTER_DENSITY,
   });
-  connectDevtools();
-  logSink("PocketJS wasm ready");
+  // Backend: WebGL2 unless unavailable or ?gpu=0. The choice must precede any 2D context —
+  // a canvas holds one context type for its lifetime.
+  if (query.get("gpu") !== "0") {
+    try {
+      gpu = createGpuRenderer(canvas, wasm);
+    } catch (e) {
+      logSink("GPU renderer unavailable, using the software rasterizer: " + (e && e.message));
+      gpu = null;
+    }
+  }
+  if (!gpu) {
+    ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+  }
+  // Sub-pixel translates (patched core, engine/web gpu_set_subpixel): the WebGL backend draws
+  // fractional translates — scroll offsets — at device-pixel precision; the app then paints its
+  // unrounded offset (app/ui/scroller.ts paintOffset). The software rasterizer keeps whole px.
+  const subpixel = !!gpu && typeof wasm.exports.gpu_set_subpixel === "function";
+  if (subpixel) wasm.exports.gpu_set_subpixel(1);
+  globalThis.__pocketSubpixelTranslate = subpixel;
+  createHud();
+  watchPixelRatio();
+  if (devtoolsEnabled) connectDevtools();
+  logSink(
+    `PocketJS wasm ready (${gpu ? "WebGL2" : "software"} renderer, density ${RASTER_DENSITY}x, ` +
+      `devicePixelRatio ${window.devicePixelRatio || 1})`,
+  );
+}
+
+// ---- shell state bridge (app/store/shell-bridge.ts) ---------------------------------------
+// A density change reloads the app; like the iOS shell, keep the user's view + scroll: the
+// guest publishes its state over the svc mailbox and the next load replays it.
+const SHELL_NAMESPACE = "pocket-home";
+let shellState = null;
+let shellInbox = [];
+function installShellBridge(ops) {
+  ops.svcOpen = (namespace) => namespace === SHELL_NAMESPACE;
+  ops.svcSend = (line) => {
+    try {
+      const message = JSON.parse(line);
+      if (message && message.t === "pocket-home/state") shellState = message.state ?? null;
+    } catch {
+      // not ours
+    }
+  };
+  ops.svcPoll = () => (shellInbox.length ? shellInbox.splice(0).join("\n") : null);
+}
+
+/** Fetch `<name><ext>` for the current density (dist/density/<d>/), else the default build. */
+async function fetchAsset(name, ext) {
+  const byDensity = await fetch(`dist/density/${RASTER_DENSITY}/${name}${ext}`);
+  if (byDensity.ok) return byDensity;
+  return fetch(`dist/${name}${ext}`);
+}
+
+// ---- startup downloads -----------------------------------------------------------------
+// Opening the page used to fetch wasm → instantiate → pak → bundle one after another. The
+// wasm now compiles while it streams in, and preload() starts the app's pak and bundle at the
+// same time, so the first frame waits for the slowest download, not the sum of all of them.
+let wasmModule = null;
+function compileWasm() {
+  wasmModule ||= (async () => {
+    const res = await fetch("pocketjs.wasm");
+    if (!res.ok) throw new Error("pocketjs.wasm not found — run: bun tools/wasm.ts");
+    if (WebAssembly.compileStreaming) {
+      try {
+        return await WebAssembly.compileStreaming(res.clone());
+      } catch {
+        // wrong MIME type from a static host: compile from bytes
+      }
+    }
+    return WebAssembly.compile(await res.arrayBuffer());
+  })();
+  return wasmModule;
+}
+
+const preloaded = new Map(); // "<name><ext>" -> Promise<ArrayBuffer | string | null>
+/** Start downloading the engine and an app's pak + bundle; load() consumes them. */
+export function preload(name) {
+  compileWasm().catch(() => {}); // mount() reports the error
+  for (const [ext, read] of [
+    [".pak", (r) => r.arrayBuffer()],
+    [".js", (r) => r.text()],
+  ]) {
+    const key = name + ext;
+    if (!preloaded.has(key)) {
+      preloaded.set(
+        key,
+        fetchAsset(name, ext).then((r) => (r.ok ? read(r) : null)),
+      );
+    }
+  }
+}
+/** One use: a later load() of the same app (a density change) must fetch the new density. */
+function takePreloaded(name, ext, read) {
+  const key = name + ext;
+  const hit = preloaded.get(key);
+  preloaded.delete(key);
+  return hit || fetchAsset(name, ext).then((r) => (r.ok ? read(r) : null));
 }
 
 /**
@@ -732,6 +1195,9 @@ export async function load(name, opts = {}) {
   wasm.init(RASTER_DENSITY); // fresh Ui: tree/styles/atlases/textures all reset
   // Host contract (see apps/hero/main.tsx): both globals BEFORE eval, reset
   // EVERY load so nothing stale leaks across reloads.
+  installShellBridge(wasm.ops);
+  shellInbox =
+    shellState !== null ? [JSON.stringify({ t: "pocket-home/restore", state: shellState })] : [];
   globalThis.ui = wasm.ops;
   globalThis.frame = undefined;
   // Audio module (contracts/spec/audio.ts): mounted as its own namespace,
@@ -744,24 +1210,28 @@ export async function load(name, opts = {}) {
   if (!netHost) netHost = createNetHost();
   netHost.reset();
   globalThis.net = netHost.ns;
-  // Clock policy (before eval, like __pak). When the user passed ?hz=N, push
-  // that as the simulation rate; otherwise leave it unset so the framework
-  // defaults to TICKS_PER_SECOND — a 120 Hz build auto-runs at 120 FPS.
-  globalThis.__simHz = hzRequested ? simHz : undefined;
+  // Clock policy (before eval, like __pak). ?hz=N pins the simulation rate; otherwise the
+  // display's rate when it divides the tick rate (see DISPLAY_RATES), else unset so the
+  // framework runs at TICKS_PER_SECOND.
+  if (!hzRequested && preferredSimHz === undefined && !opts.tape) {
+    preferredSimHz = displayRate(await probeRefresh());
+  }
+  globalThis.__simHz = hzRequested ? simHz : (preferredSimHz ?? undefined);
+  rateMismatch = 0;
   // DevTools: identity + transport BEFORE eval; render() picks them up.
   globalThis.__pocketApp = name;
   dtInbox = [];
-  globalThis.__pocketDevtoolsTransport = {
-    send: dtSend,
-    recv: () => (dtInbox.length ? dtInbox.shift() : null),
-  };
+  globalThis.__pocketDevtoolsTransport = devtoolsEnabled
+    ? { send: dtSend, recv: () => (dtInbox.length ? dtInbox.shift() : null) }
+    : undefined;
   try {
-    const pak = await fetch("dist/" + name + ".pak");
-    globalThis.__pak = pak.ok ? await pak.arrayBuffer() : undefined;
-    const srcRes = await fetch("dist/" + name + ".js");
-    if (!srcRes.ok)
+    const [pak, src] = await Promise.all([
+      takePreloaded(name, ".pak", (r) => r.arrayBuffer()),
+      takePreloaded(name, ".js", (r) => r.text()),
+    ]);
+    globalThis.__pak = pak ?? undefined;
+    if (src === null)
       throw new Error("dist/" + name + ".js not found — run: bun tools/build.ts " + name);
-    const src = await srcRes.text();
     // Fresh function scope per reload (top-level vars must not collide).
     new Function(src + "\n//# sourceURL=" + name + ".js")();
     if (typeof globalThis.frame !== "function") {
@@ -775,6 +1245,17 @@ export async function load(name, opts = {}) {
     // the framework (published by resetClock() during eval).
     tickHz = globalThis.__pocketTickHz ?? 60;
     simHz = globalThis.__pocketSimHz ?? tickHz;
+    if (!Number.isInteger(tickHz / simHz)) {
+      // Not a divisor of this bundle's tick rate (the framework snaps to one): run at tickHz.
+      logSink(`clock: ${simHz} Hz does not divide ${tickHz} Hz ticks`);
+    }
+    if (globalThis.__pocketTickHz === undefined) {
+      logSink(
+        "warning: bundle did not publish __pocketTickHz — assuming 60 Hz (the loop then paints " +
+          "at most 60 fps and a >60 Hz bundle runs slow); publish TICKS_PER_SECOND after mount",
+      );
+    }
+    logSink(`clock: ${tickHz} Hz ticks, ${simHz} Hz simulation (paints follow the display)`);
     // Sync the CORE step size to the bundle's tick rate BEFORE the first tick.
     // The core defaults to dt=1/60; a >60 Hz build (see --hz) would otherwise
     // run every ui_animate tick_hz/60× fast, because ms→frames uses the core
@@ -790,6 +1271,7 @@ export async function load(name, opts = {}) {
   logSink("loaded " + name);
   currentName = name;
   hudMem = wasmMemoryBytes(wasm); // so MEM shows before the first 1s sample
+  updateHud();
   // Raise the grow ceiling: one layout pass at INIT_MAX (the app is mounted at
   // that size), then present the target and let it reflow before the first
   // visible frame, so boot shows the target size — not a flash of INIT_MAX.

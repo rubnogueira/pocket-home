@@ -16,3 +16,21 @@ export const IOS_LEGACY_STACKS_DIR = join(IOS_HOST, "legacy/stacks");
 
 /** USB `ProductType` → label + legacy logical canvas. */
 export const IOS_PRODUCT_CATALOG = join(IOS_HOST, "catalog/product-catalog.json");
+
+/**
+ * Pinned `xcodebuild -derivedDataPath` for Simulator builds of the app shell. Products land in
+ * `Build/Products/<Configuration>-iphonesimulator/`; that exact `.app` is what gets installed.
+ */
+export const IOS_APP_SIMULATOR_DERIVED_DATA = join(
+  IOS_APP_SHELL,
+  "platforms/ios/build/DerivedData",
+);
+
+export function iosAppSimulatorProduct(configuration: "Debug" | "Release" = "Debug"): string {
+  return join(
+    IOS_APP_SIMULATOR_DERIVED_DATA,
+    "Build/Products",
+    `${configuration}-iphonesimulator`,
+    "iossimulator.app",
+  );
+}

@@ -70,9 +70,9 @@ Work in progress includes a **real HA connection** (auth, reconnect, multi-dashb
 - **Fonts / typography:** PocketJS bakes glyph atlases at build time; `font-bold` is used heavily and **weight and sizing may not match** Home Assistant or system UI. Text wrapping uses fixed font slots (`app/ui/wrap-text.ts`) and can mis-measure long strings.
 - **Scroll:** kinetic scrolling is manual (main dashboard + sheets + sidebar list); nested scroll areas are incomplete; wheel/DPAD behavior may fight focus or sidebar state.
 - **Styling:** Tailwind **opacity modifiers** (e.g. `/20`) are dropped by the compiler — some tints and overlays look wrong (see comment in `app/widgets/Sidebar.tsx`).
-- **Loading copy:** the connecting state still mentions `cd server && bun dev` instead of this repo’s `bun run dev`.
 - **Settings** UI (`SettingsWidget`) toggles are local-only and not wired to HA or persistent config.
-- **iOS / native:** one logical viewport per build; no live resize on takeover hosts; legacy phone stacks use a smaller override canvas — see [docs/VIEWPORT.md](docs/VIEWPORT.md).
+- **iOS / native:** one logical viewport per build; takeover hosts (jailbreak tiers) relayout on rotation and draw with OpenGL ES 2 (`hosts/ios/takeover/README.md`); legacy phone stacks use a smaller override canvas — see [docs/VIEWPORT.md](docs/VIEWPORT.md). The modern iOS app resizes its live surface on rotation / Stage Manager (the relaid-out frame is presented before the rotation animation starts; view, scroll, sheets and edit mode are kept) and lays the surface out in points, so the guest density equals the screen scale and the frame lands 1:1 on device pixels. It draws with Metal (same engine and host view as the jailbreak tiers: `tools/ios-app/pocket-apple-framework.ts`) at the display's full rate (120 Hz on ProMotion).
+- **Touch coordinates** carry 11 bits per axis (up to 2047 logical px) through a patch to `@pocketjs/framework` (`patches/`, applied by `bun install`); the 10-bit native cores resolve a wrapped hit for contacts past 1023, so the guest re-queries those.
 
 ## Prerequisites
 
@@ -96,6 +96,17 @@ bun run dev
 ```
 
 Open [http://127.0.0.1:8130](http://127.0.0.1:8130). The dev script builds wasm, bundles the app, and serves `dist/` with the mocked Home Assistant WebSocket on the same origin.
+
+Rendering is automatic — no `?scale=`, `?density=` or `?hz=` needed:
+
+- **GPU:** frames are drawn with WebGL2 (`hosts/web/gpu.js`) at the canvas's exact device-pixel size, so every frame is full resolution at the display's refresh rate (60/120/144 Hz…). Without WebGL2 (or with `?gpu=0`) the software rasterizer is used.
+- **Density:** glyph atlases and icons are baked at 1×, 2× and 3× (`dist/density/<d>/`); the page loads `ceil(devicePixelRatio)`, so text is sharp on 1×, fractional (125 %, 150 %) and Retina screens.
+- **Moving between screens** with different pixel ratios re-renders at the new density and keeps the current view and scroll position.
+- **Scrolling** moves at device-pixel precision on the GPU path: a patched core emits the fraction of a scroll offset as a DrawList `OFFSET` scope that `gpu.js` applies snapped to device pixels, and touch coordinates keep their fractional CSS px (`patches/`). The clock advances a fixed number of steps per vsync, so motion per frame is even.
+
+Frame-time diagnostics (any device, including a headless Simulator's Safari): `?perf=1` posts a summary every 2 s to the dev server, printed as `[perf]` lines — rAF interval, dropped frames, main-thread gaps, and the time spent in app transactions, core ticks and each GPU phase. Add `&trace=1` for the scroll offset and finger position per displayed frame, `&autodrag=1` to replay scripted flicks and drags (`hosts/web/perf.js`), and `&gpusync=1` for the time the browser's GPU process takes to execute each frame (a one-pixel read-back; it stalls the pipeline, so measure it separately). `?devtools=1` enables the PocketJS DevTools channel (off by default: its tree snapshots cost a full UI serialization per change).
+
+Per frame the GPU backend issues one or two draw calls: icons share atlas pages, fonts and other textures are bound to texture units named per vertex, and clips are applied on the CPU. The app runs one transaction per displayed frame at 60/120 Hz (it keeps 240 Hz steps on 144/165 Hz displays), so scroll physics are exact functions of time.
 
 ## Essential commands
 

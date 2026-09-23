@@ -13,6 +13,11 @@ export interface IosNativeTier {
   readonly rustTargetSpec?: string;
   readonly requiresRustNightly: boolean;
   readonly defaultRasterDensity: number;
+  /**
+   * Guest densities bundled in the app (glyphs and icons are baked per density); the app loads
+   * the one matching the screen scale at launch (hosts/ios/takeover/runtime.m).
+   */
+  readonly rasterDensities: readonly number[];
   readonly description: string;
 }
 
@@ -26,6 +31,7 @@ interface TierManifest {
   readonly rustTargetSpec?: string;
   readonly requiresRustNightly?: boolean;
   readonly defaultRasterDensity: number;
+  readonly rasterDensities?: readonly number[];
   readonly description: string;
 }
 
@@ -55,6 +61,9 @@ function loadTierManifest(fileName: string): IosNativeTier {
     rustTargetSpec: resolveRustSpec(raw.rustTargetSpec),
     requiresRustNightly: raw.requiresRustNightly === true,
     defaultRasterDensity: raw.defaultRasterDensity,
+    rasterDensities: [...new Set(raw.rasterDensities ?? [raw.defaultRasterDensity])].sort(
+      (a, b) => a - b,
+    ),
     description: raw.description,
   };
 }

@@ -220,7 +220,7 @@ export const CHECKBOX_OFF =
 export const CHECKBOX_ON =
   "w-4 h-4 rounded-md bg-blue-500 border-blue-400 items-center justify-center";
 
-export const PROGRESS_TRACK = "h-2 rounded-xl bg-slate-700 flex-1";
+export const PROGRESS_TRACK = "h-2 rounded-xl bg-slate-700 flex-1 flex-row";
 export const PROGRESS_FILL = "h-2 rounded-xl bg-blue-500";
 
 export const SKELETON = "rounded-xl bg-slate-700";

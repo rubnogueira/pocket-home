@@ -1,7 +1,8 @@
 import { Focusable, Text, View } from "@pocketjs/framework/components";
 import { getViewport } from "../theme/sizes.ts";
 import { sheetPanelWidth } from "./sheet-layout.ts";
-import { createScroller } from "@pocketjs/framework/kinetics";
+import { createScroller, paintOffset } from "./scroller.ts";
+import { useContentInsetBottom } from "../theme/content-insets.ts";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { onFrame } from "@pocketjs/framework/lifecycle";
 import { ref, computed } from "vue";
@@ -28,9 +29,12 @@ export function Sheet(props: SheetProps) {
 
   let contentNode: NodeMirror | undefined;
   const contentH = ref(1200);
+  const insetBottom = useContentInsetBottom();
 
   const scroller = createScroller({
-    max: () => Math.max(0, contentH.value - Math.max(1, vp.value.h - HEADER_H - 2)),
+    max: () =>
+      Math.max(0, contentH.value + insetBottom.value - Math.max(1, vp.value.h - HEADER_H - 2)),
+    extent: () => Math.max(1, vp.value.h - HEADER_H - 2),
   });
 
   createGesture({
@@ -53,7 +57,7 @@ export function Sheet(props: SheetProps) {
     scroller.step();
   });
 
-  const scrollY = computed(() => scroller.offset());
+  const scrollY = computed(() => paintOffset(scroller));
   const panelX = computed(() => (side === "right" ? vp.value.w - panelW.value : 0));
   const backdropW = computed(() => Math.max(0, vp.value.w - panelW.value));
 

@@ -19,8 +19,11 @@ All tooling lives under **`tools/`** (see `tools/README.md`). The monorepo only 
 
 - **Framework:** Vue Vapor — import from `vue` and `@pocketjs/framework/*` (not `solid-js`).
 - **Entry:** `app/main.tsx` (`pocket.json` → `app.entry`).
+- **Lists and resizes:** a JSX `{items.map(...)}` compiles to one effect that re-creates the whole list whenever anything read while mapping changes (no keyed diff). Read only what decides the items there; put viewport/width-dependent numbers in `style={{...}}` (compiled to getters), or a rotation rebuilds the dashboard (see `app/views/SectionsView.tsx`).
 - **Output:** `pocket-home-main` (`pocket.json` → `app.output`).
-- **Hz:** `pocket.config.ts` sets `hz: 240` for web hosts.
+- **Hz / density:** automatic. Web builds bake 240 Hz ticks; the browser host runs one app transaction per displayed frame when the display rate divides it (60/120 Hz: `__simHz`, see `hosts/web/engine.js` `DISPLAY_RATES`), so app code must be time-based, not frame-counted and one bundle + pak per raster density (`dist/density/{1,2,3}/`); `hosts/web/engine.js` picks `ceil(devicePixelRatio)`. iOS stages density 2/3 × 60/120 Hz guests; the shell picks per device (`hosts/ios/app/src/ios-viewport.ts` `pickGuestVariant`).
+- **Web renderer:** WebGL2 DrawList backend (`hosts/web/gpu.js`) fed by the Pocket Home wasm (`engine/web`, built by `tools/wasm.ts`); the software rasterizer is the fallback (`?gpu=0`).
+- **iOS renderer (jailbreak tiers and the modern app):** native port of it (`hosts/ios/takeover/PocketRenderer.m`) over `engine/ios-takeover`'s `pocket_apple_gpu_*` exports, drawing through Metal on arm64 (`PocketMetalBackend.m`) or OpenGL ES 2 (`PocketGLBackend.m`, 32-bit tiers); one texture fetch per fragment (the SGX GPUs of the 32-bit tiers are fill-rate bound). The modern app links the same engine and host view (`tools/ios-app/pocket-apple-framework.ts` builds PocketApple.xcframework in place of the plugin's prebuilt). Keep the web and iOS renderers in step when the DrawList changes.
 
 ## Layout
 

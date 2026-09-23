@@ -1,6 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { IOS_APP_SHELL } from "../ios/paths.ts";
+import {
+  IOS_APP_SHELL,
+  IOS_APP_SIMULATOR_DERIVED_DATA,
+  iosAppSimulatorProduct,
+} from "../ios/paths.ts";
 import {
   syncPlatformAppIntoBuiltBundle,
   syncStagedPocketIntoPlatformApp,
@@ -10,11 +14,13 @@ const SHELL_DIR = IOS_APP_SHELL;
 const PROJECT_NAME = "iossimulator";
 const BUNDLE_ID = "dev.pocket-home.dashboard";
 const PBXPROJ = join(SHELL_DIR, "platforms/ios", `${PROJECT_NAME}.xcodeproj`);
-const APP_PATH = join(
-  SHELL_DIR,
-  "platforms/ios/build/Debug-iphonesimulator",
-  `${PROJECT_NAME}.app`,
-);
+/**
+ * Pinned DerivedData root. Without `-derivedDataPath`, xcodebuild writes products to
+ * ~/Library/Developer/Xcode/DerivedData/<hash>/ while a stale copy under platforms/ios/build
+ * got installed — native (Swift/ObjC) edits silently never reached the Simulator.
+ */
+const DERIVED_DATA = IOS_APP_SIMULATOR_DERIVED_DATA;
+const APP_PATH = iosAppSimulatorProduct("Debug");
 
 interface CommandResult {
   readonly exitCode: number;
@@ -49,8 +55,7 @@ export async function buildIosSimulatorApp(udid: string, release: boolean): Prom
     );
   }
   const configuration = release ? "Release" : "Debug";
-  const outDir = join(SHELL_DIR, "platforms/ios/build", `${configuration}-iphonesimulator`);
-  const appPath = join(outDir, `${PROJECT_NAME}.app`);
+  const appPath = iosAppSimulatorProduct(configuration);
 
   syncStagedPocketIntoPlatformApp();
   console.log(`ios-app: xcodebuild (${configuration}, Simulator ${udid.slice(0, 8)}…)…`);
@@ -65,6 +70,8 @@ export async function buildIosSimulatorApp(udid: string, release: boolean): Prom
     "iphonesimulator",
     "-destination",
     `platform=iOS Simulator,id=${udid}`,
+    "-derivedDataPath",
+    DERIVED_DATA,
     "CODE_SIGN_IDENTITY=",
     "ONLY_ACTIVE_ARCH=YES",
     "build",
@@ -103,13 +110,7 @@ export async function installAndLaunchSimulatorApp(
 
 /** Default output path when reusing an existing build without rebuilding. */
 export function defaultSimulatorAppPath(release: boolean): string {
-  const configuration = release ? "Release" : "Debug";
-  return join(
-    SHELL_DIR,
-    "platforms/ios/build",
-    `${configuration}-iphonesimulator`,
-    `${PROJECT_NAME}.app`,
-  );
+  return iosAppSimulatorProduct(release ? "Release" : "Debug");
 }
 
 export { BUNDLE_ID, APP_PATH };

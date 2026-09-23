@@ -7,5 +7,6 @@
   "rustTargetTriple": "aarch64-apple-ios",
   "requiresRustNightly": false,
   "defaultRasterDensity": 2,
+  "rasterDensities": [2, 3],
   "description": "64-bit ARM64, iOS 12+ jailbreak. Same pocket.json canvas as other ios-native tiers."
 }

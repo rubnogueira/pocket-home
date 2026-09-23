@@ -10,8 +10,11 @@ import { manifestLogicalViewport } from "../ios/viewport.ts";
 import type { IosNativeTier } from "./tiers.ts";
 import { resolveIosNativeTier } from "./tiers.ts";
 
-export function contractsForTier(tier: IosNativeTier, logical: Viewport) {
-  const density = tier.defaultRasterDensity;
+export function contractsForTier(
+  tier: IosNativeTier,
+  logical: Viewport,
+  density = tier.defaultRasterDensity,
+) {
   const physical: Viewport = [logical[0] * density, logical[1] * density];
   return definePlatformContractRegistry(
     POCKET_CAPABILITIES,
@@ -35,13 +38,14 @@ export function contractsForTier(tier: IosNativeTier, logical: Viewport) {
 export function resolveIosNativeBuildPlan(
   manifestInput: unknown,
   tierId?: string,
+  density?: number,
 ): ResolvedBuildPlan {
   const tier = resolveIosNativeTier(tierId);
   const logical = manifestLogicalViewport(manifestInput);
   const resolution = validateAndResolveBuildPlan(
     manifestInput,
     { target: tier.targetId },
-    contractsForTier(tier, logical),
+    contractsForTier(tier, logical, density),
   );
   if (!resolution.ok) {
     throw new Error(
